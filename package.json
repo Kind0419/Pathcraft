@@ -1,0 +1,52 @@
+{
+  "name": "pathcraft",
+  "version": "0.3.1",
+  "description": "Composable 2D path-planning workbench with A*, Dijkstra, Greedy, BFS, DFS and draggable algorithm recipes.",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "typecheck": "tsc --noEmit",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview --host 127.0.0.1",
+    "bundle": "node scripts/package.mjs"
+  },
+  "dependencies": {
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1"
+  },
+  "devDependencies": {
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.1.2",
+    "tsx": "^4.23.15",
+    "typescript": "5.9.3",
+    "vite": "^8.3.4"
+  },
+  "author": "Kind0419",
+  "homepage": "https://Kind0419.github.io/Pathcraft/",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Kind0419/Pathcraft.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Kind0419/Pathcraft/issues"
+  },
+  "keywords": [
+    "path-planning",
+    "a-star",
+    "dijkstra",
+    "bfs",
+    "dfs",
+    "greedy-best-first",
+    "react",
+    "typescript",
+    "canvas",
+    "robotics",
+    "pathfinding",
+    "visualization"
+  ],
+  "engines": {
+    "node": ">=22.12.0"
+  }
+}

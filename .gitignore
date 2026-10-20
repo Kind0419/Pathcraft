@@ -1,0 +1,14 @@
+node_modules/
+dist/
+.pnpm-store/
+.tmp-test/
+.edge-profile*/
+screenshot*.png
+*.log
+.DS_Store
+release/
+.vite/
+coverage/
+.env
+.env.*
+!.env.example
