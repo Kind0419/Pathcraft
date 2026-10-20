@@ -7,11 +7,11 @@
 
 > Status: `0.3.2` prototype · 2D grid · 不是生产级机器人规划器
 
-[![Pathcraft interactive demo](https://cdn.jsdelivr.net/gh/Kind0419/Pathcraft@main/docs/preview.gif)](https://Kind0419.github.io/Pathcraft/)
+[![Pathcraft interactive demo](https://Kind0419.github.io/Pathcraft/preview.gif?v=2)](https://Kind0419.github.io/Pathcraft/)
 
 > **关于在线交互**：GitHub 的 README 是静态 Markdown，不能内嵌 iframe / JavaScript 直接运行这个应用。  
 > 点击上面的 GIF，或打开 <https://Kind0419.github.io/Pathcraft/> 进入可交互版本。
-> 如果动图仍未显示，可打开 [静态截图](https://cdn.jsdelivr.net/gh/Kind0419/Pathcraft@main/docs/preview.png)。
+> 如果动图仍未显示，可打开 [静态截图](https://Kind0419.github.io/Pathcraft/preview.png?v=2)。
 
 ---
 
