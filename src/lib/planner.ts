@@ -174,13 +174,25 @@ function simplifyPath(
   map: GridMap,
   cards: CardsState,
   points: Point[],
+  tolerance: number,
 ): Point[] {
+  if (points.length <= 2) return [...points]
   const result = [...points]
   let changed = true
   while (changed) {
     changed = false
     for (let i = 1; i < result.length - 1; i += 1) {
-      if (lineClear(map, cards, result[i - 1], result[i + 1])) {
+      const a = result[i - 1]
+      const p = result[i]
+      const b = result[i + 1]
+      const dx = b.x - a.x
+      const dy = b.y - a.y
+      const length = Math.hypot(dx, dy)
+      const distance =
+        length < 1e-9
+          ? Math.hypot(p.x - a.x, p.y - a.y)
+          : Math.abs(dy * p.x - dx * p.y + b.x * a.y - b.y * a.x) / length
+      if (distance <= tolerance + 1e-9 && lineClear(map, cards, a, b)) {
         result.splice(i, 1)
         changed = true
         i -= 1
@@ -477,11 +489,13 @@ export function plan(
     if (!cards[id]?.enabled) continue
     if (id === 'smooth') path = smoothPath(map, cards, path)
     if (id === 'round') {
-      const rounded = chaikin(path, 2)
+      const passes = Math.max(1, Math.min(4, Math.round(cards.round.value)))
+      const rounded = chaikin(path, passes)
       if (pathIsClear(map, cards, rounded)) path = rounded
     }
     if (id === 'simplify') {
-      const simplified = simplifyPath(map, cards, path)
+      const tolerance = Math.max(0, cards.simplify.value)
+      const simplified = simplifyPath(map, cards, path, tolerance)
       if (pathIsClear(map, cards, simplified)) path = simplified
     }
   }

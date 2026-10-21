@@ -1,17 +1,17 @@
 # Pathcraft
 
 **An interactive, composable path-planning workbench.**  
-用卡片拼装路径规划算法，实时查看搜索过程、最终路径、代价和编译链。
+用可组合卡片拼装路径规划算法，实时查看搜索过程、执行轨迹、最终路径与指标。
+
+[中文](README.md) · [English](README.en.md)
 
 [Live Demo](https://Kind0419.github.io/Pathcraft/) · [GitHub](https://github.com/Kind0419/Pathcraft) · [MIT License](LICENSE)
 
-> Status: `0.3.2` prototype · 2D grid · 不是生产级机器人规划器
+> Status: `0.4.0` · 2D grid · React + TypeScript + Canvas
 
-[![Pathcraft interactive demo](https://Kind0419.github.io/Pathcraft/preview.gif?v=2)](https://Kind0419.github.io/Pathcraft/)
+[![Pathcraft interactive demo](https://Kind0419.github.io/Pathcraft/preview.gif?v=3)](https://Kind0419.github.io/Pathcraft/)
 
-> **关于在线交互**：GitHub 的 README 是静态 Markdown，不能内嵌 iframe / JavaScript 直接运行这个应用。  
-> 点击上面的 GIF，或打开 <https://Kind0419.github.io/Pathcraft/> 进入可交互版本。
-> 如果动图仍未显示，可打开 [静态截图](https://Kind0419.github.io/Pathcraft/preview.png?v=2)。
+> GitHub 的 README 是静态 Markdown，不能直接运行这个应用。点击上面的 GIF，或打开 <https://Kind0419.github.io/Pathcraft/> 进入可交互版本。
 
 ---
 
@@ -19,14 +19,14 @@
 
 Pathcraft 是一个运行在浏览器里的 2D 栅格路径规划实验台。
 
-它把路径规划拆成可组合的卡片：
+它把路径规划拆成可组合的参数模块：
 
 - **搜索**：A*、Dijkstra、贪心、BFS、DFS、加权 A*
 - **代价**：间隙、转角、长度、斜向偏好、目标容差
-- **约束**：安全膨胀、最大转角、反向剪枝、切角、扩展预算
-- **后处理**：可见性剪枝、Chaikin 平滑、路径抽稀
+- **约束**：安全膨胀、最大转角、禁止掉头、切角、扩展预算
+- **后处理**：可见性拉直、Chaikin 平滑（轮数）、路径抽稀（容差）
 
-在左侧选择卡片，右侧调整参数，中间实时观察搜索波前、最终路径和上一版路径。适合学习路径规划、比较算法行为，或快速验证一个规划想法。
+在左侧组件库选择模块，右侧装配表调整数值，中间实时观察搜索波前、最终路径和上一版路径。流程页把当前回放帧映射到实际执行分支，并显示队列、扩展节点与卡片编译位点。
 
 ---
 
@@ -34,19 +34,28 @@ Pathcraft 是一个运行在浏览器里的 2D 栅格路径规划实验台。
 
 - 三个 2D 场景：凹槽、窄门、杂物场
 - 2D 地图编辑：画墙 / 擦除 / 笔刷 1·3·5 / 清空 / 恢复预设
-- 起终点点击与拖动；靠近障碍时吸附到最近安全格
+- 起终点点击与拖动；靠近障碍时沿安全边界滑动，并按格吸附到最近合法格
 - 搜索回放：播放、暂停、时间轴、0.5x / 1x / 2x
 - 搜索 / 路径 / 旧路径图层开关
 - 画布 80%–105% 缩放；滚轮或 `− / +`
-- 「专注」一键收起两侧面板，地图最大化
+- 「专注」收起两侧面板，地图最大化
 - 左 / 右 / 下三个面板可拖拽缩放，缩到阈值自动收起
-- 卡片拖动排序、拖出取消、拖动期间禁止选中文字
-- 左侧卡片库按搜索 / 代价 / 约束 / 后处理分组折叠
+- 装配行拖动排序、拖出取消、拖动期间禁止选中文字
+- 组件库按搜索 / 代价 / 约束 / 后处理分组折叠，并显示参数符号
+- 流程页：可拖动的装配链 + 实时执行轨迹（当前节点、g/h/f、开放集、实际分支）
+- 悬停卡片时，流程中对应代码行与画布上的影响区域同步高亮
+- 参数详情页扫描并显示可行区间；不连续可行域不会被误锁死
 - 指标页：环形代价图 + 分段条 + 图例
-- 流程页：可拖动的编译链，重排后同步回配方
 - 无解时在底部指标条显示原因，并直接打开对应参数
 - 分享 URL、导出 JSON / CSV
 - 单文件离线版本
+- 中文 / English 切换
+
+### 执行轨迹
+
+流程页不是静态示意图：它按当前回放帧高亮实际执行分支，右侧给出当前节点、g / h / f、开放集和扩展状态；下方的装配表可以拖动重排，悬停任意一行时画布会高亮该参数影响的区域。
+
+![Pathcraft execution trace](https://Kind0419.github.io/Pathcraft/preview-flow.png?v=1)
 
 ---
 
@@ -63,9 +72,7 @@ Pathcraft 是一个运行在浏览器里的 2D 栅格路径规划实验台。
 | BFS | FIFO 入队顺序 |
 | DFS | LIFO 出栈顺序 |
 
-尚未实现：RRT / RRT* / PRM、D* Lite、JPS、IDA*、双向搜索、Beam、ACO、遗传算法。
-
-这些需要独立的 planner 适配层，不是在当前 A* 引擎里加一个开关就能可靠实现的。项目不会用不可用的占位卡冒充“全部传统算法”。
+尚未接入：RRT / RRT* / PRM、D* Lite、JPS、IDA*、双向搜索、Beam、ACO、遗传算法。
 
 ---
 
@@ -106,33 +113,25 @@ pnpm bundle
 
 ```text
 src/
-  App.tsx                 布局、状态、URL、拖拽、流程、导出
-  styles.css              全部样式
+  App.tsx                 布局、状态、URL、拖拽、参数检查、导出
+  styles.css              全部样式（单一设计系统）
   components/
     CanvasView.tsx        Canvas2D 绘制、命中、起终点、缩放、画笔
-    Card.tsx              配方卡片、滑块、开关、choice chips
+    Card.tsx              装配行、滑块、开关、choice chips
+    FlowPanel.tsx         执行轨迹、卡片编译位点、流程拖拽
     Icon.tsx              线性图标
   lib/
     types.ts              公共类型
-    cards.ts              16 张卡、默认值、分组
+    cards.ts              16 张卡、参数符号、编译位点、默认值
     maps.ts               预设地图、clearance
     planner.ts            图搜索、策略优先级、代价、约束
+    feasibility.ts        参数可行区间扫描
+    i18n.tsx              中英双语文本与语言上下文
     heap.ts               MinHeap
 scripts/
   check.ts                planner 冒烟检查
   package.mjs             单文件打包
 ```
-
----
-
-## 设计取向
-
-- **画布优先**：不把地图塞进小卡片
-- **错误不打扰**：无解原因放在底部指标条，不遮挡主视图
-- **参数不被粗暴锁死**：可行区间可能不连续，滑杆允许继续拖到另一段可行值
-- **物理约束优先**：起终点不进入障碍或安全膨胀区
-- **可对比**：旧路径以灰色虚线保留
-- **可分发**：在线 Demo + 单文件离线版本
 
 ---
 
@@ -153,13 +152,10 @@ pnpm exec tsx scripts/check.ts
 
 ---
 
-## License & Attribution
+## License
 
 **MIT License** © 2026 Kind0419 · Pathcraft
 
-你可以自由使用、修改、分发和商业使用，只需要：
+你可以自由使用、修改、分发和商业使用。保留 [LICENSE](LICENSE) 中的版权声明与许可声明即可。
 
-1. 保留 [LICENSE](LICENSE) 中的版权声明和许可声明
-2. 在衍生项目说明中注明原作者 **Kind0419** 和项目 **Pathcraft**
-
-MIT 不要求在应用界面中显示作者；如果你要求“必须在 UI 上可见署名”，需要另写更严格的许可证。
+如果 Pathcraft 对你的项目有帮助，欢迎在文档中注明原作者 **Kind0419** 和项目 **Pathcraft**。

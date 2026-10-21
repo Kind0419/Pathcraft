@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type WheelEvent as ReactWheelEvent } from 'react'
+import { tr, useLang } from '../lib/i18n'
 import type { CardId, CardsState, GridMap, PlanResult, Point } from '../lib/types'
 
 type EditMode = 'none' | 'start' | 'goal'
@@ -135,6 +136,7 @@ export function CanvasView({
   zoom,
   onZoom,
 }: CanvasViewProps) {
+  const lang = useLang()
   const wrapperRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const dragMarkerRef = useRef<'start' | 'goal' | null>(null)
@@ -145,6 +147,69 @@ export function CanvasView({
   const displayPathRef = useRef<Point[]>(result.path)
   const morphFrameRef = useRef(0)
   const mapIdRef = useRef(map.id)
+  const [markerView, setMarkerView] = useState({
+    start: { x: map.start.x, y: map.start.y },
+    goal: { x: map.goal.x, y: map.goal.y },
+  })
+  const markerViewRef = useRef(markerView)
+  const markerFrameRef = useRef(0)
+
+  useEffect(() => {
+    const target = {
+      start: { x: map.start.x, y: map.start.y },
+      goal: { x: map.goal.x, y: map.goal.y },
+    }
+    const from = markerViewRef.current
+    const distance = Math.max(
+      Math.abs(target.start.x - from.start.x),
+      Math.abs(target.start.y - from.start.y),
+      Math.abs(target.goal.x - from.goal.x),
+      Math.abs(target.goal.y - from.goal.y),
+    )
+    if (markerFrameRef.current) {
+      cancelAnimationFrame(markerFrameRef.current)
+      markerFrameRef.current = 0
+    }
+    if (
+      distance > 5 ||
+      window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    ) {
+      markerViewRef.current = target
+      setMarkerView(target)
+      return
+    }
+    if (distance < 1e-4) return
+    const startedAt = performance.now()
+    const duration = 95
+    const tick = (now: number) => {
+      const progress = Math.min(1, (now - startedAt) / duration)
+      const eased = 1 - Math.pow(1 - progress, 2)
+      const next = {
+        start: {
+          x: from.start.x + (target.start.x - from.start.x) * eased,
+          y: from.start.y + (target.start.y - from.start.y) * eased,
+        },
+        goal: {
+          x: from.goal.x + (target.goal.x - from.goal.x) * eased,
+          y: from.goal.y + (target.goal.y - from.goal.y) * eased,
+        },
+      }
+      markerViewRef.current = next
+      setMarkerView(next)
+      if (progress < 1) {
+        markerFrameRef.current = requestAnimationFrame(tick)
+      } else {
+        markerFrameRef.current = 0
+      }
+    }
+    markerFrameRef.current = requestAnimationFrame(tick)
+    return () => {
+      if (markerFrameRef.current) {
+        cancelAnimationFrame(markerFrameRef.current)
+        markerFrameRef.current = 0
+      }
+    }
+  }, [map.start.x, map.start.y, map.goal.x, map.goal.y])
 
   const layout = useMemo(
     () => layoutFor(size.width, size.height, map, zoom),
@@ -251,7 +316,7 @@ export function CanvasView({
     if (!ctx) return
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
     draw(ctx, size.width, size.height)
-  }, [size, map, cards, result, playhead, ghostPath, hover, hoverCard, showExpanded, showPath, showGhost, layout, displayPath, mapEditMode, brushSize, editMode])
+  }, [size, map, cards, result, playhead, ghostPath, hover, hoverCard, showExpanded, showPath, showGhost, layout, displayPath, mapEditMode, brushSize, editMode, markerView])
 
   function draw(ctx: CanvasRenderingContext2D, width: number, height: number) {
     const { cell, ox, oy } = layout
@@ -268,13 +333,13 @@ export function CanvasView({
       height * 0.5,
       Math.max(width, height) * 0.72,
     )
-    paper.addColorStop(0, '#fcfcf9')
-    paper.addColorStop(1, '#eef1ed')
+    paper.addColorStop(0, '#fbfaf6')
+    paper.addColorStop(1, '#f3f0e7')
     ctx.fillStyle = paper
     ctx.fillRect(0, 0, width, height)
 
     // Paper grid.
-    ctx.strokeStyle = 'rgba(53, 58, 67, 0.045)'
+    ctx.strokeStyle = 'rgba(64, 68, 58, 0.05)'
     ctx.lineWidth = 1
     for (let x = 0; x <= map.width; x += 1) {
       const px = Math.round(ox + x * cell) + 0.5
@@ -291,7 +356,7 @@ export function CanvasView({
       ctx.stroke()
     }
 
-    ctx.strokeStyle = 'rgba(52, 58, 66, 0.07)'
+    ctx.strokeStyle = 'rgba(64, 68, 58, 0.10)'
     ctx.lineWidth = 1
     roundRect(
       ctx,
@@ -311,7 +376,7 @@ export function CanvasView({
           if (map.cells[index] === 1) continue
           const strength = Math.max(0, 1 - map.clearance[index] / 3.2)
           if (strength <= 0.01) continue
-          ctx.fillStyle = `rgba(251, 191, 36, ${0.12 * strength})`
+          ctx.fillStyle = `rgba(154, 118, 55, ${0.12 * strength})`
           ctx.fillRect(ox + x * cell, oy + y * cell, cell, cell)
         }
       }
@@ -334,7 +399,7 @@ export function CanvasView({
           const index = y * map.width + x
           if (map.cells[index] === 1) continue
           const strength = values[index] / maxH
-          ctx.fillStyle = `rgba(167, 139, 250, ${0.13 * strength})`
+          ctx.fillStyle = `rgba(65, 104, 119, ${0.13 * strength})`
           ctx.fillRect(ox + x * cell, oy + y * cell, cell, cell)
         }
       }
@@ -345,7 +410,7 @@ export function CanvasView({
           const index = y * map.width + x
           if (map.cells[index] === 1 || map.clearance[index] >= radius) continue
           const strength = 1 - map.clearance[index] / Math.max(radius, 0.001)
-          ctx.fillStyle = `rgba(251, 146, 60, ${0.1 + 0.12 * strength})`
+          ctx.fillStyle = `rgba(164, 95, 67, ${0.1 + 0.12 * strength})`
           ctx.fillRect(ox + x * cell, oy + y * cell, cell, cell)
         }
       }
@@ -357,10 +422,10 @@ export function CanvasView({
         if (map.cells[y * map.width + x] !== 1) continue
         const px = ox + x * cell
         const py = oy + y * cell
-        ctx.fillStyle = '#252b29'
+        ctx.fillStyle = '#333a33'
         roundRect(ctx, px + 0.6, py + 0.6, cell - 1.2, cell - 1.2, Math.max(1, cell * 0.16))
         ctx.fill()
-        ctx.strokeStyle = 'rgba(255, 255, 255, 0.055)'
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.06)'
         ctx.lineWidth = 1
         ctx.stroke()
       }
@@ -373,9 +438,9 @@ export function CanvasView({
       for (let i = 0; i < visibleEvents; i += 1) {
         const event = result.events[i]
         const progress = (i + 1) / Math.max(1, visibleEvents)
-        const alpha = completed ? 0.1 : 0.09 + progress * 0.2
-        const inset = cell * 0.27
-        ctx.fillStyle = `rgba(73, 92, 105, ${alpha})`
+        const alpha = completed ? 0.19 : 0.15 + progress * 0.25
+        const inset = cell * 0.25
+        ctx.fillStyle = `rgba(55, 82, 70, ${alpha})`
         ctx.fillRect(
           ox + event.x * cell + inset,
           oy + event.y * cell + inset,
@@ -395,7 +460,7 @@ export function CanvasView({
         0,
         Math.PI * 2,
       )
-      ctx.fillStyle = '#6366f1'
+      ctx.fillStyle = '#a45f43'
       ctx.fill()
       ctx.strokeStyle = 'rgba(255,255,255,0.9)'
       ctx.lineWidth = 1.2
@@ -413,7 +478,7 @@ export function CanvasView({
         else ctx.lineTo(px, py)
       })
       ctx.setLineDash([4, 5])
-      ctx.strokeStyle = 'rgba(100, 116, 139, 0.58)'
+      ctx.strokeStyle = 'rgba(110, 112, 102, 0.55)'
       ctx.lineWidth = Math.max(1.2, cell * 0.075)
       ctx.lineCap = 'round'
       ctx.lineJoin = 'round'
@@ -421,8 +486,11 @@ export function CanvasView({
       ctx.restore()
     }
 
-    // Bridge preview: show the raw search path behind the smoothed one.
-    if (hoverCard === 'smooth' && cards.smooth.enabled && result.rawPath.length > 1) {
+    // Bridge preview: the raw search path behind a processed path.
+    if (
+      (hoverCard === 'smooth' || hoverCard === 'round' || hoverCard === 'simplify') &&
+      result.rawPath.length > 1
+    ) {
       ctx.save()
       ctx.beginPath()
       result.rawPath.forEach((point, index) => {
@@ -432,7 +500,7 @@ export function CanvasView({
         else ctx.lineTo(px, py)
       })
       ctx.setLineDash([3, 4])
-      ctx.strokeStyle = 'rgba(45, 212, 191, 0.5)'
+      ctx.strokeStyle = 'rgba(65, 104, 119, 0.55)'
       ctx.lineWidth = Math.max(1.4, cell * 0.08)
       ctx.lineCap = 'round'
       ctx.lineJoin = 'round'
@@ -457,9 +525,9 @@ export function CanvasView({
       ctx.lineWidth = Math.max(6, cell * 0.46)
       ctx.stroke()
       ctx.save()
-      ctx.shadowColor = 'rgba(31, 78, 95, 0.22)'
+      ctx.shadowColor = 'rgba(47, 93, 80, 0.22)'
       ctx.shadowBlur = Math.max(5, cell * 0.55)
-      ctx.strokeStyle = '#1f4e5f'
+      ctx.strokeStyle = '#2f5d50'
       ctx.lineWidth = Math.max(2.6, cell * 0.23)
       ctx.stroke()
       ctx.restore()
@@ -475,7 +543,7 @@ export function CanvasView({
             0,
             Math.PI * 2,
           )
-          ctx.fillStyle = '#1f4e5f'
+          ctx.fillStyle = '#2f5d50'
           ctx.fill()
         }
       }
@@ -501,9 +569,180 @@ export function CanvasView({
           0,
           Math.PI * 2,
         )
-        ctx.fillStyle = `rgba(244, 114, 182, ${0.26 + Math.min(0.45, delta / Math.PI)})`
+        ctx.fillStyle = `rgba(164, 95, 67, ${0.26 + Math.min(0.45, delta / Math.PI)})`
         ctx.fill()
       }
+    }
+
+    // Additional card previews. Each card should have a visible consequence
+    // on the canvas, so hovering the library or a recipe row explains it.
+    if (hoverCard === 'diagonal') {
+      const anchor =
+        visibleEvents > 0
+          ? result.events[Math.min(visibleEvents, result.events.length) - 1]
+          : hover ?? { x: map.start.x, y: map.start.y }
+      ctx.save()
+      ctx.strokeStyle = 'rgba(47, 93, 80, 0.55)'
+      ctx.fillStyle = 'rgba(47, 93, 80, 0.08)'
+      ctx.lineWidth = 1
+      for (let dy = -1; dy <= 1; dy += 1) {
+        for (let dx = -1; dx <= 1; dx += 1) {
+          if (dx === 0 && dy === 0) continue
+          const x = anchor.x + dx
+          const y = anchor.y + dy
+          if (x < 0 || y < 0 || x >= map.width || y >= map.height) continue
+          roundRect(
+            ctx,
+            ox + x * cell + 2,
+            oy + y * cell + 2,
+            cell - 4,
+            cell - 4,
+            2,
+          )
+          ctx.fill()
+          ctx.stroke()
+        }
+      }
+      ctx.restore()
+    }
+
+    if (hoverCard === 'maxTurn' && pathVisible && displayPath.length > 2) {
+      const limit = cards.maxTurn.enabled ? cards.maxTurn.value : 45
+      for (let i = 1; i < displayPath.length - 1; i += 1) {
+        const prev = displayPath[i - 1]
+        const point = displayPath[i]
+        const next = displayPath[i + 1]
+        const a1 = Math.atan2(point.y - prev.y, point.x - prev.x)
+        const a2 = Math.atan2(next.y - point.y, next.x - point.x)
+        let delta = Math.abs(a2 - a1)
+        if (delta > Math.PI) delta = Math.PI * 2 - delta
+        const degrees = (delta * 180) / Math.PI
+        if (degrees <= limit + 1) continue
+        ctx.beginPath()
+        ctx.arc(
+          ox + (point.x + 0.5) * cell,
+          oy + (point.y + 0.5) * cell,
+          Math.max(4, cell * 0.26),
+          0,
+          Math.PI * 2,
+        )
+        ctx.fillStyle = 'rgba(164, 95, 67, 0.32)'
+        ctx.fill()
+        ctx.strokeStyle = 'rgba(164, 95, 67, 0.75)'
+        ctx.lineWidth = 1
+        ctx.stroke()
+      }
+    }
+
+    if (hoverCard === 'noUTurn') {
+      const route = result.rawPath.length > 1 ? result.rawPath : displayPath
+      for (let i = 2; i < route.length; i += 1) {
+        const a = route[i - 2]
+        const b = route[i]
+        if (a.x === b.x && a.y === b.y) {
+          ctx.beginPath()
+          ctx.arc(
+            ox + (route[i - 1].x + 0.5) * cell,
+            oy + (route[i - 1].y + 0.5) * cell,
+            Math.max(3, cell * 0.2),
+            0,
+            Math.PI * 2,
+          )
+          ctx.fillStyle = 'rgba(164, 95, 67, 0.4)'
+          ctx.fill()
+        }
+      }
+    }
+
+    if (hoverCard === 'diagonalBias' && pathVisible) {
+      for (let i = 1; i < displayPath.length; i += 1) {
+        const a = displayPath[i - 1]
+        const b = displayPath[i]
+        const orthogonal = Math.abs(a.x - b.x) < 1e-6 || Math.abs(a.y - b.y) < 1e-6
+        ctx.beginPath()
+        ctx.moveTo(ox + (a.x + 0.5) * cell, oy + (a.y + 0.5) * cell)
+        ctx.lineTo(ox + (b.x + 0.5) * cell, oy + (b.y + 0.5) * cell)
+        ctx.strokeStyle = orthogonal
+          ? 'rgba(164, 95, 67, 0.7)'
+          : 'rgba(47, 93, 80, 0.28)'
+        ctx.lineWidth = Math.max(1.4, cell * 0.09)
+        ctx.stroke()
+      }
+    }
+
+    if (hoverCard === 'lengthWeight' && pathVisible) {
+      ctx.save()
+      ctx.beginPath()
+      displayPath.forEach((point, index) => {
+        const px = ox + (point.x + 0.5) * cell
+        const py = oy + (point.y + 0.5) * cell
+        if (index === 0) ctx.moveTo(px, py)
+        else ctx.lineTo(px, py)
+      })
+      ctx.setLineDash([2, 5])
+      ctx.strokeStyle = 'rgba(154, 118, 55, 0.7)'
+      ctx.lineWidth = Math.max(1.4, cell * 0.1)
+      ctx.stroke()
+      ctx.restore()
+    }
+
+    if (hoverCard === 'cornerCut') {
+      const route = result.rawPath.length > 1 ? result.rawPath : displayPath
+      for (let i = 1; i < route.length; i += 1) {
+        const a = route[i - 1]
+        const b = route[i]
+        const dx = Math.sign(b.x - a.x)
+        const dy = Math.sign(b.y - a.y)
+        if (dx === 0 || dy === 0) continue
+        const si = (a.y + dy) * map.width + (a.x + dx)
+        if (map.cells[si] !== 1) continue
+        ctx.beginPath()
+        ctx.arc(
+          ox + (b.x + 0.5) * cell,
+          oy + (b.y + 0.5) * cell,
+          Math.max(3, cell * 0.22),
+          0,
+          Math.PI * 2,
+        )
+        ctx.fillStyle = 'rgba(164, 95, 67, 0.35)'
+        ctx.fill()
+      }
+    }
+
+    if (hoverCard === 'budget' && cards.budget.enabled) {
+      const index = Math.min(
+        result.events.length - 1,
+        Math.max(0, Math.round(cards.budget.value)),
+      )
+      const event = result.events[index]
+      if (event) {
+        ctx.beginPath()
+        ctx.arc(
+          ox + (event.x + 0.5) * cell,
+          oy + (event.y + 0.5) * cell,
+          Math.max(5, cell * 0.34),
+          0,
+          Math.PI * 2,
+        )
+        ctx.strokeStyle = 'rgba(164, 95, 67, 0.85)'
+        ctx.lineWidth = 2
+        ctx.stroke()
+      }
+    }
+
+    if (hoverCard === 'strategy' && visibleEvents > 0) {
+      const event = result.events[Math.min(visibleEvents, result.events.length) - 1]
+      ctx.beginPath()
+      ctx.arc(
+        ox + (event.x + 0.5) * cell,
+        oy + (event.y + 0.5) * cell,
+        Math.max(5, cell * 0.32),
+        0,
+        Math.PI * 2,
+      )
+      ctx.strokeStyle = 'rgba(47, 93, 80, 0.7)'
+      ctx.lineWidth = 1.5
+      ctx.stroke()
     }
 
     // Goal tolerance region.
@@ -512,29 +751,30 @@ export function CanvasView({
       const goalCenterY = oy + (map.goal.y + 0.5) * cell
       ctx.beginPath()
       ctx.arc(goalCenterX, goalCenterY, cell * cards.goalTolerance.value, 0, Math.PI * 2)
-      ctx.fillStyle = 'rgba(194, 65, 12, 0.06)'
+      ctx.fillStyle = 'rgba(164, 95, 67, 0.07)'
       ctx.fill()
       ctx.setLineDash([3, 3])
-      ctx.strokeStyle = 'rgba(194, 65, 12, 0.38)'
+      ctx.strokeStyle = 'rgba(164, 95, 67, 0.4)'
       ctx.lineWidth = 1
       ctx.stroke()
       ctx.setLineDash([])
     }
 
-    // Start and goal.
-    const startX = ox + (map.start.x + 0.5) * cell
-    const startY = oy + (map.start.y + 0.5) * cell
-    const goalX = ox + (map.goal.x + 0.5) * cell
-    const goalY = oy + (map.goal.y + 0.5) * cell
+    // Start and goal. Marker positions interpolate between cells so dragging
+    // along a wall reads as a continuous slide instead of a per-cell jump.
+    const startX = ox + (markerView.start.x + 0.5) * cell
+    const startY = oy + (markerView.start.y + 0.5) * cell
+    const goalX = ox + (markerView.goal.x + 0.5) * cell
+    const goalY = oy + (markerView.goal.y + 0.5) * cell
     const markerRadius = Math.max(8, cell * 0.4)
 
     ctx.beginPath()
     ctx.arc(startX, startY, markerRadius + 3.2, 0, Math.PI * 2)
-    ctx.fillStyle = 'rgba(3, 105, 161, 0.1)'
+    ctx.fillStyle = 'rgba(47, 93, 80, 0.12)'
     ctx.fill()
     ctx.beginPath()
     ctx.arc(startX, startY, markerRadius, 0, Math.PI * 2)
-    ctx.fillStyle = '#1f4e5f'
+    ctx.fillStyle = '#2f5d50'
     ctx.fill()
     ctx.strokeStyle = '#ffffff'
     ctx.lineWidth = 2
@@ -542,11 +782,11 @@ export function CanvasView({
 
     ctx.beginPath()
     ctx.arc(goalX, goalY, markerRadius + 3.2, 0, Math.PI * 2)
-    ctx.fillStyle = 'rgba(194, 65, 12, 0.1)'
+    ctx.fillStyle = 'rgba(164, 95, 67, 0.12)'
     ctx.fill()
     ctx.beginPath()
     ctx.arc(goalX, goalY, markerRadius, 0, Math.PI * 2)
-    ctx.fillStyle = '#8f5540'
+    ctx.fillStyle = '#a45f43'
     ctx.fill()
     ctx.strokeStyle = '#ffffff'
     ctx.lineWidth = 2
@@ -566,14 +806,14 @@ export function CanvasView({
       ctx.arc(activeX, activeY, markerRadius + 7, 0, Math.PI * 2)
       ctx.setLineDash([4, 3])
       ctx.lineWidth = 1.5
-      ctx.strokeStyle = editMode === 'start' ? '#0369a1' : '#c2410c'
+      ctx.strokeStyle = editMode === 'start' ? '#416877' : '#a45f43'
       ctx.stroke()
       ctx.setLineDash([])
     }
 
     // Hovered cell.
     if (hover) {
-      ctx.strokeStyle = 'rgba(31, 78, 95, 0.9)'
+      ctx.strokeStyle = 'rgba(47, 93, 80, 0.9)'
       ctx.lineWidth = 1.5
       roundRect(ctx, ox + hover.x * cell + 1, oy + hover.y * cell + 1, cell - 2, cell - 2, 3)
       ctx.stroke()
@@ -583,8 +823,8 @@ export function CanvasView({
       const offset = Math.floor(brushSize / 2)
       ctx.fillStyle =
         mapEditMode === 'wall'
-          ? 'rgba(249, 115, 22, 0.18)'
-          : 'rgba(31, 78, 95, 0.14)'
+          ? 'rgba(164, 95, 67, 0.18)'
+          : 'rgba(65, 104, 119, 0.14)'
       for (let dy = -offset; dy < brushSize - offset; dy += 1) {
         for (let dx = -offset; dx < brushSize - offset; dx += 1) {
           const x = hover.x + dx
@@ -691,8 +931,8 @@ export function CanvasView({
       else {
         onInvalidPoint?.(
           editMode === 'start'
-            ? '附近没有可放置起点的安全格'
-            : '附近没有可放置终点的安全格',
+            ? tr(lang, '附近没有可放置起点的安全格')
+            : tr(lang, '附近没有可放置终点的安全格'),
         )
       }
       return
@@ -713,10 +953,10 @@ export function CanvasView({
     const rect = canvas.getBoundingClientRect()
     const mx = event.clientX - rect.left
     const my = event.clientY - rect.top
-    const startX = layout.ox + (map.start.x + 0.5) * layout.cell
-    const startY = layout.oy + (map.start.y + 0.5) * layout.cell
-    const goalX = layout.ox + (map.goal.x + 0.5) * layout.cell
-    const goalY = layout.oy + (map.goal.y + 0.5) * layout.cell
+    const startX = layout.ox + (markerView.start.x + 0.5) * layout.cell
+    const startY = layout.oy + (markerView.start.y + 0.5) * layout.cell
+    const goalX = layout.ox + (markerView.goal.x + 0.5) * layout.cell
+    const goalY = layout.oy + (markerView.goal.y + 0.5) * layout.cell
     const hitRadius = Math.max(13, layout.cell * 0.72)
     const nearStart = Math.hypot(mx - startX, my - startY) <= hitRadius
     const nearGoal = Math.hypot(mx - goalX, my - goalY) <= hitRadius
@@ -793,7 +1033,7 @@ export function CanvasView({
       <canvas
         ref={canvasRef}
         className={`canvas ${editMode !== 'none' || mapEditMode ? 'is-editing' : ''}`}
-        aria-label="路径规划搜索画布；拖动 S 或 G 修改起点和终点"
+        aria-label={tr(lang, '路径规划搜索画布；拖动 S 或 G 修改起点和终点')}
         onWheel={handleWheel}
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
@@ -811,8 +1051,8 @@ export function CanvasView({
         <div className="canvas-overlay canvas-hover-info">
           <span className={`hover-swatch ${hover.blocked ? 'is-blocked' : ''}`} />
           {hover.blocked
-            ? `障碍格 · (${hover.x}, ${hover.y})`
-            : `可通行 · (${hover.x}, ${hover.y}) · 间隙 ${hover.clearance.toFixed(1)} 格`}
+            ? `${tr(lang, '障碍格')} · (${hover.x}, ${hover.y})`
+            : `${tr(lang, '可通行')} · (${hover.x}, ${hover.y}) · ${tr(lang, '间隙')} ${hover.clearance.toFixed(1)} ${tr(lang, '格')}`}
         </div>
       ) : null}
 

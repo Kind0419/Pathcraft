@@ -1,7 +1,7 @@
 {
   "name": "pathcraft",
-  "version": "0.3.2",
-  "description": "Composable 2D path-planning workbench with A*, Dijkstra, Greedy, BFS, DFS and draggable algorithm recipes.",
+  "version": "0.4.0",
+  "description": "Composable 2D path-planning workbench with live execution traces, draggable algorithm recipes and A*, Dijkstra, Greedy, BFS, DFS.",
   "license": "MIT",
   "type": "module",
   "scripts": {
@@ -44,7 +44,9 @@
     "canvas",
     "robotics",
     "pathfinding",
-    "visualization"
+    "visualization",
+    "runtime-trace",
+    "algorithm-visualization"
   ],
   "engines": {
     "node": ">=22.12.0"

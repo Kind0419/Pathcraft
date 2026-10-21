@@ -53,3 +53,40 @@ for (const smooth of [false, true]) {
     clearanceM: (result.minClearance * map.cellSize).toFixed(2),
   })
 }
+
+for (let mode = 0; mode <= 5; mode += 1) {
+  const cards = createDefaultCards()
+  cards.strategy.value = mode
+  const result = plan(map, cards)
+  console.log(`strategy=${mode}`, {
+    label: result.algorithmLabel,
+    status: result.status,
+    expanded: result.expanded,
+    waypoints: result.waypoints,
+    lengthM: (result.pathLength * map.cellSize).toFixed(2),
+  })
+}
+
+for (let passes = 1; passes <= 4; passes += 1) {
+  const cards = createDefaultCards()
+  cards.round.enabled = true
+  cards.round.value = passes
+  const result = plan(map, cards, ['smooth', 'round'])
+  console.log(`chaikin=${passes}`, {
+    status: result.status,
+    waypoints: result.waypoints,
+    lengthM: (result.pathLength * map.cellSize).toFixed(2),
+  })
+}
+
+for (const tolerance of [0, 0.5, 1, 2]) {
+  const cards = createDefaultCards()
+  cards.simplify.enabled = true
+  cards.simplify.value = tolerance
+  const result = plan(map, cards, ['smooth', 'round', 'simplify'])
+  console.log(`simplify=${tolerance}`, {
+    status: result.status,
+    waypoints: result.waypoints,
+    lengthM: (result.pathLength * map.cellSize).toFixed(2),
+  })
+}
