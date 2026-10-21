@@ -67,6 +67,22 @@ for (let mode = 0; mode <= 5; mode += 1) {
   })
 }
 
+for (let mode = 6; mode <= 9; mode += 1) {
+  const cards = createDefaultCards()
+  cards.strategy.value = mode
+  const result = plan(map, cards)
+  console.log(`continuous=${mode}`, {
+    label: result.algorithmLabel,
+    continuous: result.continuous,
+    status: result.status,
+    expanded: result.expanded,
+    waypoints: result.waypoints,
+    lengthM: (result.pathLength * map.cellSize).toFixed(2),
+    clearanceM: (result.minClearance * map.cellSize).toFixed(2),
+    solve: result.solveTime.toFixed(2),
+  })
+}
+
 for (let passes = 1; passes <= 4; passes += 1) {
   const cards = createDefaultCards()
   cards.round.enabled = true

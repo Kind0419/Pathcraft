@@ -1,5 +1,83 @@
 import type { GridMap, MapId, Point } from './types'
 
+export const MAP_LIMITS = {
+  minWidth: 24,
+  maxWidth: 72,
+  minHeight: 18,
+  maxHeight: 56,
+  maxCells: 4032,
+} as const
+
+export function clampMapSize(width: number, height: number): {
+  width: number
+  height: number
+} {
+  let w = Math.round(width)
+  let h = Math.round(height)
+  w = Math.max(MAP_LIMITS.minWidth, Math.min(MAP_LIMITS.maxWidth, w))
+  h = Math.max(MAP_LIMITS.minHeight, Math.min(MAP_LIMITS.maxHeight, h))
+  while (w * h > MAP_LIMITS.maxCells) {
+    if (w >= h && w > MAP_LIMITS.minWidth) w -= 1
+    else if (h > MAP_LIMITS.minHeight) h -= 1
+    else break
+  }
+  return { width: w, height: h }
+}
+
+export function resizeCells(
+  source: Uint8Array,
+  oldWidth: number,
+  oldHeight: number,
+  width: number,
+  height: number,
+): Uint8Array {
+  const cells = new Uint8Array(width * height)
+  const offsetX = Math.floor((width - oldWidth) / 2)
+  const offsetY = Math.floor((height - oldHeight) / 2)
+  // Copy the interior only: the old outer frame must not become an internal
+  // wall when the canvas grows.
+  for (let y = 1; y < oldHeight - 1; y += 1) {
+    for (let x = 1; x < oldWidth - 1; x += 1) {
+      const tx = x + offsetX
+      const ty = y + offsetY
+      if (tx <= 0 || ty <= 0 || tx >= width - 1 || ty >= height - 1) continue
+      cells[ty * width + tx] = source[y * oldWidth + x]
+    }
+  }
+  // Always keep a closed outer wall after a resize.
+  for (let x = 0; x < width; x += 1) {
+    cells[x] = 1
+    cells[(height - 1) * width + x] = 1
+  }
+  for (let y = 0; y < height; y += 1) {
+    cells[y * width] = 1
+    cells[y * width + width - 1] = 1
+  }
+  return cells
+}
+
+export function findFreeCell(
+  cells: Uint8Array,
+  width: number,
+  height: number,
+  preferred: Point,
+): Point {
+  const startX = Math.max(1, Math.min(width - 2, Math.round(preferred.x)))
+  const startY = Math.max(1, Math.min(height - 2, Math.round(preferred.y)))
+  for (let radius = 0; radius < Math.max(width, height); radius += 1) {
+    for (let dy = -radius; dy <= radius; dy += 1) {
+      for (let dx = -radius; dx <= radius; dx += 1) {
+        if (Math.max(Math.abs(dx), Math.abs(dy)) !== radius) continue
+        const x = startX + dx
+        const y = startY + dy
+        if (x <= 0 || y <= 0 || x >= width - 1 || y >= height - 1) continue
+        if (cells[y * width + x] === 0) return { x, y }
+      }
+    }
+  }
+  return { x: startX, y: startY }
+}
+
 interface MapSpec {
   id: MapId
   name: string
@@ -148,26 +226,31 @@ export function getMap(id: MapId): GridMap {
   return MAPS.find((map) => map.id === id) ?? MAPS[0]
 }
 
-export function mapFromCells(base: GridMap, source: Uint8Array): GridMap {
-  if (source.length !== base.width * base.height) return base
+export function mapFromCells(
+  base: GridMap,
+  source: Uint8Array,
+  width = base.width,
+  height = base.height,
+): GridMap {
+  if (source.length !== width * height) return base
   const cells = new Uint8Array(source)
 
   // Keep a closed outer boundary even if a shared URL contains bad cells.
-  for (let x = 0; x < base.width; x += 1) {
+  for (let x = 0; x < width; x += 1) {
     cells[x] = 1
-    cells[(base.height - 1) * base.width + x] = 1
+    cells[(height - 1) * width + x] = 1
   }
-  for (let y = 0; y < base.height; y += 1) {
-    cells[y * base.width] = 1
-    cells[y * base.width + base.width - 1] = 1
+  for (let y = 0; y < height; y += 1) {
+    cells[y * width] = 1
+    cells[y * width + width - 1] = 1
   }
-  cells[base.start.y * base.width + base.start.x] = 0
-  cells[base.goal.y * base.width + base.goal.x] = 0
 
   return {
     ...base,
+    width,
+    height,
     cells,
-    clearance: computeClearance(cells, base.width, base.height),
+    clearance: computeClearance(cells, width, height),
   }
 }
 

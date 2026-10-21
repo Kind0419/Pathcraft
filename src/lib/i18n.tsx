@@ -203,7 +203,7 @@ const EN: Record<string, string> = {
   '终止': 'Terminate',
 
   // card metadata — details
-  'A* 按 g+h 排序；Dijkstra 只按 g；贪心只按 h；BFS 按入队顺序；DFS 按后进先出；加权 A* 使用 1.5× 启发式。代价项与硬约束在所有策略下都参与路径评价。': 'A* orders by g+h; Dijkstra by g; Greedy by h; BFS by insertion order; DFS by LIFO; weighted A* uses 1.5× the heuristic. Cost terms and hard constraints still participate in path evaluation under every strategy.',
+  'A* 按 g+h 排序；Dijkstra 只按 g；贪心只按 h；BFS 按入队顺序；DFS 按后进先出；加权 A* 使用 1.5× 启发式。代价项与硬约束在所有策略下都参与路径评价。选择 RRT / RRT* / PRM / 可见性图时切换到连续 2D 空间，使用采样或路线图规划。': 'A* orders by g+h; Dijkstra by g; Greedy by h; BFS by insertion order; DFS by LIFO; weighted A* uses 1.5× the heuristic. Cost terms and hard constraints still participate in path evaluation under every strategy. RRT / RRT* / PRM / Visibility graph switch to a continuous 2D space and use sampling or a roadmap.',
   'w_h = 1 为标准 A*；w_h = 0 等价 Dijkstra，搜索会均匀铺开；w_h > 1 为加权 A*，收敛更快但不保证最优。': 'w_h = 1 is standard A*; w_h = 0 is equivalent to Dijkstra and spreads the search evenly; w_h > 1 is weighted A*, which converges faster but may sacrifice optimality.',
   '关闭后为 4 邻域，路径呈阶梯形。斜向移动会检查两侧正交邻居，避免穿过障碍角缝；是否允许穿角由「允许切角」控制。': 'When off, the neighborhood is 4-connected and paths look stair-stepped. Diagonal moves check both orthogonal neighbors to avoid slipping through obstacle corners; enable Corner cut to change that behavior.',
   'd(n) 是当前格到最近障碍的距离，d_safe 固定为 3.2 格。它不是硬约束：只提高贴墙的代价，路径仍可贴墙通过。': 'd(n) is the distance from the current cell to the nearest obstacle, with d_safe fixed at 3.2 cells. It is not a hard constraint: it only raises the cost of hugging walls, so paths can still pass close to them.',
@@ -274,6 +274,8 @@ const EN: Record<string, string> = {
 
   // card metadata — canvas mapping
   '波前扩散形状': 'Frontier shape',
+  '波前扩散 / 采样树': 'Frontier / sampling tree',
+  '排序键 · 队列优先级 / 连续采样': 'Sort key · queue priority / continuous sampling',
   '目标方向场': 'Goal direction field',
   '斜向路径段': 'Diagonal path segments',
   '间隙场': 'Clearance field',
@@ -292,6 +294,15 @@ const EN: Record<string, string> = {
 
   // card metadata — options
   '贪心': 'Greedy',
+  '可见性图': 'Visibility graph',
+  '连续空间': 'Continuous space',
+  '空间': 'Space',
+  '栅格空间': 'Grid space',
+  '规格': 'Size',
+  '应用': 'Apply',
+  '采样': 'Samples',
+  '连续规划': 'Continuous planning',
+  '采样未连通': 'Sampler did not connect start and goal',
   '加权 A*': 'Weighted A*',
 
   // card metadata — units and states
@@ -323,6 +334,10 @@ const EN: Record<string, string> = {
   '控制流': 'Control flow',
   '本轮结束': 'Run finished',
   '初始化': 'Init',
+  '采样循环': 'Sampling loop',
+  '碰撞检查': 'collision check',
+  '重连': 'rewire',
+  '加入': 'add',
   '主循环': 'Main loop',
   '队列序': 'queue order',
   'f 值最小': 'min f',

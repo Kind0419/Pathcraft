@@ -684,6 +684,18 @@ input:focus-visible,
   white-space: nowrap;
 }
 
+.stage-note {
+  display: block;
+  max-width: 520px;
+  margin-top: 4px;
+  overflow: hidden;
+  color: var(--blue);
+  font-size: 9.5px;
+  line-height: 1.4;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .custom-map-badge {
   padding: 1px 6px;
   color: var(--muted);
@@ -732,6 +744,21 @@ input:focus-visible,
   font-size: 9.5px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.stage-space {
+  padding: 1px 5px;
+  color: var(--faint);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  font-size: 9px;
+  white-space: nowrap;
+}
+
+.stage-space.is-continuous {
+  color: var(--blue);
+  background: var(--blue-soft);
+  border-color: #c9d8dc;
 }
 
 .status-dot {
@@ -907,7 +934,8 @@ input:focus-visible,
 .edit-bar {
   display: flex;
   align-items: center;
-  gap: 12px;
+  flex-wrap: wrap;
+  gap: 8px 12px;
   flex: none;
   min-height: 34px;
   padding: 4px 8px;
@@ -963,6 +991,54 @@ input:focus-visible,
   margin-right: 3px;
   color: var(--faint);
   font-size: 9.5px;
+}
+
+.map-size-editor {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding-left: 8px;
+  border-left: 1px solid #dbc4b5;
+}
+
+.map-size-editor > span:first-child {
+  color: var(--faint);
+  font-size: 9.5px;
+}
+
+.map-size-editor input {
+  width: 40px;
+  height: 24px;
+  padding: 0 4px;
+  color: var(--text);
+  background: #fffdf8;
+  border: 1px solid #d9c5b7;
+  border-radius: 3px;
+  font-family: var(--mono);
+  font-size: 10px;
+  text-align: center;
+}
+
+.map-size-editor button {
+  height: 24px;
+  padding: 0 7px;
+  color: var(--clay);
+  background: #fffdf8;
+  border: 1px solid #d9c5b7;
+  border-radius: 3px;
+  font-size: 9.5px;
+}
+
+.map-size-editor button:hover {
+  border-color: var(--clay);
+}
+
+.map-size-editor em {
+  color: var(--faint);
+  font-family: var(--mono);
+  font-size: 8.5px;
+  font-style: normal;
+  white-space: nowrap;
 }
 
 .edit-actions {

@@ -186,6 +186,165 @@ export function FlowPanel({
         <em>{playing ? tr(lang, '回放中') : finished ? tr(lang, '本轮结束') : tr(lang, '已暂停')}</em>
       </div>
 
+      {result.continuous ? (
+        <ol className="trace-list trace-continuous">
+          <li className={`trace-stage ${phase === 'init' ? 'is-active' : 'is-past'}`}>
+            <span className="trace-node">01</span>
+            <div className="trace-body">
+              <div className="trace-stage-head">
+                <strong>{tr(lang, '初始化')}</strong>
+                <span>{mode === 8 || mode === 9 ? 'ROADMAP' : 'TREE'}</span>
+              </div>
+              <div className="trace-code">
+                <code>
+                  {mode === 8 || mode === 9
+                    ? 'roadmap ← {start, goal}'
+                    : 'tree ← {start, dir=∅}'}
+                </code>
+                <span>1 node</span>
+              </div>
+              <div className="trace-code">
+                <code>
+                  {mode === 8 || mode === 9
+                    ? 'nodes ← sampleFreeSpace(n)'
+                    : 'q_rand ← sampleFreeSpace()'}
+                </code>
+                <span>{tr(lang, '连续空间')}</span>
+              </div>
+            </div>
+          </li>
+
+          <li className={`trace-stage ${phase === 'loop' ? 'is-active' : success || failed ? 'is-past' : ''}`}>
+            <span className="trace-node">02</span>
+            <div className="trace-body">
+              <div className="trace-stage-head">
+                <strong>{tr(lang, '采样循环')}</strong>
+                <span>{mode === 9 ? 'VISIBILITY' : mode === 8 ? 'PRM' : mode === 7 ? 'RRT*' : 'RRT'}</span>
+              </div>
+              <div className="trace-code">
+                <code>while samples &lt; N_max:</code>
+                <span>{fmtNum(lang, result.expanded)}</span>
+              </div>
+              <div className="trace-code is-indent">
+                <code>q_rand ← sampleFreeSpace()</code>
+                <span>random</span>
+              </div>
+              <div className="trace-code is-indent">
+                <code>q_near ← nearest(tree, q_rand)</code>
+                <span>{current ? `g ${fmt(current.g)}` : '—'}</span>
+              </div>
+              <div className="trace-code is-indent">
+                <code>q_new ← steer(q_near, q_rand, step)</code>
+                <span>{current ? `(${current.x.toFixed(1)}, ${current.y.toFixed(1)})` : 'step 1.7'}</span>
+              </div>
+              <div className="trace-code is-indent">
+                <code>if collision(q_new): continue</code>
+                <span className="trace-chip">{tr(lang, '碰撞检查')}</span>
+              </div>
+              <div className="trace-code is-indent">
+                <code>{mode === 8 || mode === 9 ? 'connect(q, k-nearest)' : 'tree.add(q_new)'}</code>
+                <span>{mode === 7 ? tr(lang, '重连') : tr(lang, '加入')}</span>
+              </div>
+              <div className={`trace-code is-indent ${success ? 'is-hit' : ''}`}>
+                <code>if dist(q_new, goal) ≤ step: break</code>
+                <span className={`trace-chip ${success ? 'is-yes' : 'is-no'}`}>
+                  {success ? tr(lang, '命中终点') : tr(lang, '否')}
+                </span>
+              </div>
+            </div>
+          </li>
+
+          <li className={`trace-stage ${phase === 'done' || phase === 'fail' ? 'is-active' : ''}`}>
+            <span className="trace-node">03</span>
+            <div className="trace-body">
+              <div className="trace-stage-head">
+                <strong>{tr(lang, '终止')}</strong>
+                <span>RETURN</span>
+              </div>
+              {success ? (
+                <div className="trace-code">
+                  <code>return reconstruct(parent, goal)</code>
+                  <span className="trace-chip is-yes">{tr(lang, '命中终点')}</span>
+                </div>
+              ) : failed ? (
+                <div className="trace-code">
+                  <code>return ∅</code>
+                  <span className="trace-chip is-no">{tr(lang, '采样未连通')}</span>
+                </div>
+              ) : (
+                <div className="trace-code">
+                  <code>{tr(lang, '等待主循环退出…')}</code>
+                  <span>{playing ? tr(lang, '回放中') : tr(lang, '暂停')}</span>
+                </div>
+              )}
+            </div>
+          </li>
+
+          <li className={`trace-stage ${success ? 'is-active' : ''} ${postFocus ? 'is-linked' : ''}`}>
+            <span className="trace-node">04</span>
+            <div className="trace-body">
+              <div className="trace-stage-head">
+                <strong>{tr(lang, '后处理')}</strong>
+                <span>BRIDGE</span>
+              </div>
+              {success ? (
+                <>
+                  <div className="trace-code">
+                    <code>path ← shortcut(path) + recipe.post(path)</code>
+                    <span>{plural(lang, postCards.length, '个处理器', 'processor')}</span>
+                  </div>
+                  <div className="trace-chips">
+                    {postCards.map(({ id, def, state }) => (
+                      <button
+                        key={id}
+                        type="button"
+                        className="trace-card-chip"
+                        style={{ '--chip-accent': def.accent } as CSSProperties}
+                        onClick={() => onSelectCard(id)}
+                        onMouseEnter={() => onHoverStart(id)}
+                        onMouseLeave={onHoverEnd}
+                      >
+                        <span>{tr(lang, def.title)}</span>
+                        <em>{cardValueLabel(def, state.value, lang)}</em>
+                      </button>
+                    ))}
+                  </div>
+                </>
+              ) : (
+                <p className="trace-empty">{tr(lang, '无可行路径，后处理不会执行。')}</p>
+              )}
+            </div>
+          </li>
+
+          <li className={`trace-stage ${success ? 'is-active' : ''}`}>
+            <span className="trace-node">05</span>
+            <div className="trace-body">
+              <div className="trace-stage-head">
+                <strong>{tr(lang, '输出')}</strong>
+                <span>METRICS</span>
+              </div>
+              <div className="trace-output">
+                <div>
+                  <span>{tr(lang, '长度')}</span>
+                  <strong>{success ? `${fmt(result.pathLength * map.cellSize)} m` : '—'}</strong>
+                </div>
+                <div>
+                  <span>{tr(lang, '路径点')}</span>
+                  <strong>{success ? result.waypoints : '—'}</strong>
+                </div>
+                <div>
+                  <span>{tr(lang, '最小间隙')}</span>
+                  <strong>{success ? `${fmt(result.minClearance * map.cellSize)} m` : '—'}</strong>
+                </div>
+                <div>
+                  <span>{tr(lang, '求解')}</span>
+                  <strong>{fmt(result.solveTime, 1)} ms</strong>
+                </div>
+              </div>
+            </div>
+          </li>
+        </ol>
+      ) : (
       <ol className="trace-list">
         <li className={`trace-stage ${phase === 'init' ? 'is-active' : 'is-past'}`}>
           <span className="trace-node">01</span>
@@ -372,6 +531,7 @@ export function FlowPanel({
           </div>
         </li>
       </ol>
+      )}
 
       <div className="flow-section-label">
         <span>{tr(lang, '开放集规模')}</span>

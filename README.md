@@ -7,9 +7,9 @@
 
 [Live Demo](https://Kind0419.github.io/Pathcraft/) · [GitHub](https://github.com/Kind0419/Pathcraft) · [MIT License](LICENSE)
 
-> Status: `0.4.0` · 2D grid · React + TypeScript + Canvas
+> Status: `0.5.0` · 2D grid + continuous · React + TypeScript + Canvas
 
-[![Pathcraft interactive demo](https://Kind0419.github.io/Pathcraft/preview.gif?v=3)](https://Kind0419.github.io/Pathcraft/)
+[![Pathcraft interactive demo](https://Kind0419.github.io/Pathcraft/preview.gif?v=4)](https://Kind0419.github.io/Pathcraft/)
 
 > GitHub 的 README 是静态 Markdown，不能直接运行这个应用。点击上面的 GIF，或打开 <https://Kind0419.github.io/Pathcraft/> 进入可交互版本。
 
@@ -17,23 +17,26 @@
 
 ## 这是什么
 
-Pathcraft 是一个运行在浏览器里的 2D 栅格路径规划实验台。
+Pathcraft 是一个运行在浏览器里的 2D 路径规划实验台，同时支持**栅格图搜索**和**连续空间采样规划**。
 
 它把路径规划拆成可组合的参数模块：
 
-- **搜索**：A*、Dijkstra、贪心、BFS、DFS、加权 A*
+- **搜索**：A*、Dijkstra、贪心、BFS、DFS、加权 A*；RRT、RRT*、PRM、可见性图
 - **代价**：间隙、转角、长度、斜向偏好、目标容差
 - **约束**：安全膨胀、最大转角、禁止掉头、切角、扩展预算
 - **后处理**：可见性拉直、Chaikin 平滑（轮数）、路径抽稀（容差）
 
-在左侧组件库选择模块，右侧装配表调整数值，中间实时观察搜索波前、最终路径和上一版路径。流程页把当前回放帧映射到实际执行分支，并显示队列、扩展节点与卡片编译位点。
+在左侧组件库选择模块，右侧装配表调整数值，中间实时观察搜索波前、最终路径和上一版路径。流程页把当前回放帧映射到实际执行分支，并显示队列、扩展节点与卡片编译位点。选择 RRT / RRT* / PRM / 可见性图时，画布切换到连续 2D 空间，路径以光滑折线输出。
 
 ---
 
 ## 可以做什么
 
 - 三个 2D 场景：凹槽、窄门、杂物场
+- 地图规格编辑：24–72 列 × 18–56 行，最多 4032 格；保留已有墙体并安全重排起终点
 - 2D 地图编辑：画墙 / 擦除 / 笔刷 1·3·5 / 清空 / 恢复预设
+- 栅格模式：A* / Dijkstra / 贪心 / BFS / DFS / 加权 A*
+- 连续模式：RRT / RRT* / PRM / 可见性图，输出光滑连续路径
 - 起终点点击与拖动；靠近障碍时沿安全边界滑动，并按格吸附到最近合法格
 - 搜索回放：播放、暂停、时间轴、0.5x / 1x / 2x
 - 搜索 / 路径 / 旧路径图层开关
@@ -55,13 +58,19 @@ Pathcraft 是一个运行在浏览器里的 2D 栅格路径规划实验台。
 
 流程页不是静态示意图：它按当前回放帧高亮实际执行分支，右侧给出当前节点、g / h / f、开放集和扩展状态；下方的装配表可以拖动重排，悬停任意一行时画布会高亮该参数影响的区域。
 
-![Pathcraft execution trace](https://Kind0419.github.io/Pathcraft/preview-flow.png?v=1)
+![Pathcraft execution trace](https://Kind0419.github.io/Pathcraft/preview-flow.png?v=2)
+
+### 连续空间
+
+切换到 RRT / RRT* / PRM / 可见性图后，搜索点变成连续采样点，最终路径经过碰撞检查与捷径平滑。地图规格、安全膨胀和起终点仍然生效。
+
+![Pathcraft continuous planning](https://Kind0419.github.io/Pathcraft/preview-continuous.png?v=2)
 
 ---
 
 ## 算法范围
 
-当前覆盖传统**图搜索主干**，通过「搜索策略」卡一键切换：
+### 栅格图搜索
 
 | 策略 | 优先级 |
 |---|---|
@@ -72,7 +81,18 @@ Pathcraft 是一个运行在浏览器里的 2D 栅格路径规划实验台。
 | BFS | FIFO 入队顺序 |
 | DFS | LIFO 出栈顺序 |
 
-尚未接入：RRT / RRT* / PRM、D* Lite、JPS、IDA*、双向搜索、Beam、ACO、遗传算法。
+### 连续 2D 空间
+
+| 策略 | 做法 |
+|---|---|
+| RRT | 随机采样 + 最近邻 + 步进 + 碰撞检查 |
+| RRT* | RRT + 邻域重连，路径更短 |
+| PRM | 采样路线图 + k 近邻连接 + Dijkstra |
+| 可见性图 | 自由空间路线图 + 8 邻域 + 可见捷径 + Dijkstra |
+
+连续模式默认对输出做一次视线捷径，并在安全间隙允许时对转角做圆角；再按“可见性拉直 / Chaikin / 抽稀”卡处理。安全膨胀会同时用于采样点、边碰撞和圆角检查。
+
+尚未接入：D* Lite、JPS、IDA*、双向搜索、Beam、ACO、遗传算法。
 
 ---
 
@@ -113,18 +133,19 @@ pnpm bundle
 
 ```text
 src/
-  App.tsx                 布局、状态、URL、拖拽、参数检查、导出
+  App.tsx                 布局、状态、URL、拖拽、地图规格、参数检查、导出
   styles.css              全部样式（单一设计系统）
   components/
-    CanvasView.tsx        Canvas2D 绘制、命中、起终点、缩放、画笔
+    CanvasView.tsx        Canvas2D 绘制、命中、起终点、缩放、画笔、连续路径
     Card.tsx              装配行、滑块、开关、choice chips
-    FlowPanel.tsx         执行轨迹、卡片编译位点、流程拖拽
+    FlowPanel.tsx         图搜索 / 连续采样执行轨迹、卡片编译位点、流程拖拽
     Icon.tsx              线性图标
   lib/
     types.ts              公共类型
     cards.ts              16 张卡、参数符号、编译位点、默认值
-    maps.ts               预设地图、clearance
-    planner.ts            图搜索、策略优先级、代价、约束
+    maps.ts               预设地图、规格限制、clearance
+    planner.ts            图搜索、策略优先级、代价、约束、调度
+    continuous.ts         RRT / RRT* / PRM / 可见性图、连续碰撞、平滑
     feasibility.ts        参数可行区间扫描
     i18n.tsx              中英双语文本与语言上下文
     heap.ts               MinHeap

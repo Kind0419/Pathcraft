@@ -10,6 +10,7 @@ interface CanvasViewProps {
   result: PlanResult
   playhead: number
   ghostPath: Point[]
+  ghostContinuous: boolean
   hoverCard: CardId | null
   showExpanded: boolean
   showPath: boolean
@@ -40,7 +41,7 @@ interface HoverCell {
 }
 
 function layoutFor(width: number, height: number, map: GridMap, zoom: number): Layout {
-  const pad = 26
+  const pad = 16
   const base = Math.min(
     Math.max(4, (width - pad * 2) / map.width),
     Math.max(4, (height - pad * 2) / map.height),
@@ -121,6 +122,7 @@ export function CanvasView({
   result,
   playhead,
   ghostPath,
+  ghostContinuous,
   hoverCard,
   showExpanded,
   showPath,
@@ -320,6 +322,8 @@ export function CanvasView({
 
   function draw(ctx: CanvasRenderingContext2D, width: number, height: number) {
     const { cell, ox, oy } = layout
+    const pathOffset = result.continuous ? 0 : 0.5
+    const ghostOffset = ghostContinuous ? 0 : 0.5
     const eventCount = result.events.length
     const visibleEvents = Math.max(0, Math.min(playhead, eventCount))
     const pathVisible = result.status === 'success' && showPath && displayPath.length > 1
@@ -441,12 +445,24 @@ export function CanvasView({
         const alpha = completed ? 0.19 : 0.15 + progress * 0.25
         const inset = cell * 0.25
         ctx.fillStyle = `rgba(55, 82, 70, ${alpha})`
-        ctx.fillRect(
-          ox + event.x * cell + inset,
-          oy + event.y * cell + inset,
-          cell - inset * 2,
-          cell - inset * 2,
-        )
+        if (result.continuous) {
+          ctx.beginPath()
+          ctx.arc(
+            ox + event.x * cell,
+            oy + event.y * cell,
+            Math.max(1.2, cell * 0.09),
+            0,
+            Math.PI * 2,
+          )
+          ctx.fill()
+        } else {
+          ctx.fillRect(
+            ox + event.x * cell + inset,
+            oy + event.y * cell + inset,
+            cell - inset * 2,
+            cell - inset * 2,
+          )
+        }
       }
     }
 
@@ -454,8 +470,8 @@ export function CanvasView({
       const current = result.events[visibleEvents - 1]
       ctx.beginPath()
       ctx.arc(
-        ox + (current.x + 0.5) * cell,
-        oy + (current.y + 0.5) * cell,
+        ox + (current.x + pathOffset) * cell,
+        oy + (current.y + pathOffset) * cell,
         Math.max(2.5, cell * 0.22),
         0,
         Math.PI * 2,
@@ -472,8 +488,8 @@ export function CanvasView({
       ctx.save()
       ctx.beginPath()
       ghostPath.forEach((point, index) => {
-        const px = ox + (point.x + 0.5) * cell
-        const py = oy + (point.y + 0.5) * cell
+        const px = ox + (point.x + ghostOffset) * cell
+        const py = oy + (point.y + ghostOffset) * cell
         if (index === 0) ctx.moveTo(px, py)
         else ctx.lineTo(px, py)
       })
@@ -494,8 +510,8 @@ export function CanvasView({
       ctx.save()
       ctx.beginPath()
       result.rawPath.forEach((point, index) => {
-        const px = ox + (point.x + 0.5) * cell
-        const py = oy + (point.y + 0.5) * cell
+        const px = ox + (point.x + pathOffset) * cell
+        const py = oy + (point.y + pathOffset) * cell
         if (index === 0) ctx.moveTo(px, py)
         else ctx.lineTo(px, py)
       })
@@ -514,8 +530,8 @@ export function CanvasView({
       ctx.save()
       ctx.beginPath()
       displayPath.forEach((point, index) => {
-        const px = ox + (point.x + 0.5) * cell
-        const py = oy + (point.y + 0.5) * cell
+        const px = ox + (point.x + pathOffset) * cell
+        const py = oy + (point.y + pathOffset) * cell
         if (index === 0) ctx.moveTo(px, py)
         else ctx.lineTo(px, py)
       })
@@ -537,8 +553,8 @@ export function CanvasView({
           const point = displayPath[i]
           ctx.beginPath()
           ctx.arc(
-            ox + (point.x + 0.5) * cell,
-            oy + (point.y + 0.5) * cell,
+            ox + (point.x + pathOffset) * cell,
+            oy + (point.y + pathOffset) * cell,
             Math.max(1.2, cell * 0.075),
             0,
             Math.PI * 2,
@@ -563,8 +579,8 @@ export function CanvasView({
         if (delta < 0.02) continue
         ctx.beginPath()
         ctx.arc(
-          ox + (point.x + 0.5) * cell,
-          oy + (point.y + 0.5) * cell,
+          ox + (point.x + pathOffset) * cell,
+          oy + (point.y + pathOffset) * cell,
           Math.max(2.2, cell * 0.12) + delta * cell * 0.22,
           0,
           Math.PI * 2,
@@ -620,8 +636,8 @@ export function CanvasView({
         if (degrees <= limit + 1) continue
         ctx.beginPath()
         ctx.arc(
-          ox + (point.x + 0.5) * cell,
-          oy + (point.y + 0.5) * cell,
+          ox + (point.x + pathOffset) * cell,
+          oy + (point.y + pathOffset) * cell,
           Math.max(4, cell * 0.26),
           0,
           Math.PI * 2,
@@ -642,8 +658,8 @@ export function CanvasView({
         if (a.x === b.x && a.y === b.y) {
           ctx.beginPath()
           ctx.arc(
-            ox + (route[i - 1].x + 0.5) * cell,
-            oy + (route[i - 1].y + 0.5) * cell,
+            ox + (route[i - 1].x + pathOffset) * cell,
+            oy + (route[i - 1].y + pathOffset) * cell,
             Math.max(3, cell * 0.2),
             0,
             Math.PI * 2,
@@ -660,8 +676,8 @@ export function CanvasView({
         const b = displayPath[i]
         const orthogonal = Math.abs(a.x - b.x) < 1e-6 || Math.abs(a.y - b.y) < 1e-6
         ctx.beginPath()
-        ctx.moveTo(ox + (a.x + 0.5) * cell, oy + (a.y + 0.5) * cell)
-        ctx.lineTo(ox + (b.x + 0.5) * cell, oy + (b.y + 0.5) * cell)
+        ctx.moveTo(ox + (a.x + pathOffset) * cell, oy + (a.y + pathOffset) * cell)
+        ctx.lineTo(ox + (b.x + pathOffset) * cell, oy + (b.y + pathOffset) * cell)
         ctx.strokeStyle = orthogonal
           ? 'rgba(164, 95, 67, 0.7)'
           : 'rgba(47, 93, 80, 0.28)'
@@ -674,8 +690,8 @@ export function CanvasView({
       ctx.save()
       ctx.beginPath()
       displayPath.forEach((point, index) => {
-        const px = ox + (point.x + 0.5) * cell
-        const py = oy + (point.y + 0.5) * cell
+        const px = ox + (point.x + pathOffset) * cell
+        const py = oy + (point.y + pathOffset) * cell
         if (index === 0) ctx.moveTo(px, py)
         else ctx.lineTo(px, py)
       })
@@ -698,8 +714,8 @@ export function CanvasView({
         if (map.cells[si] !== 1) continue
         ctx.beginPath()
         ctx.arc(
-          ox + (b.x + 0.5) * cell,
-          oy + (b.y + 0.5) * cell,
+          ox + (b.x + pathOffset) * cell,
+          oy + (b.y + pathOffset) * cell,
           Math.max(3, cell * 0.22),
           0,
           Math.PI * 2,
@@ -718,8 +734,8 @@ export function CanvasView({
       if (event) {
         ctx.beginPath()
         ctx.arc(
-          ox + (event.x + 0.5) * cell,
-          oy + (event.y + 0.5) * cell,
+          ox + (event.x + pathOffset) * cell,
+          oy + (event.y + pathOffset) * cell,
           Math.max(5, cell * 0.34),
           0,
           Math.PI * 2,
@@ -734,8 +750,8 @@ export function CanvasView({
       const event = result.events[Math.min(visibleEvents, result.events.length) - 1]
       ctx.beginPath()
       ctx.arc(
-        ox + (event.x + 0.5) * cell,
-        oy + (event.y + 0.5) * cell,
+        ox + (event.x + pathOffset) * cell,
+        oy + (event.y + pathOffset) * cell,
         Math.max(5, cell * 0.32),
         0,
         Math.PI * 2,

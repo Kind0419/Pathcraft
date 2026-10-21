@@ -1,6 +1,6 @@
 {
   "name": "pathcraft",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Composable 2D path-planning workbench with live execution traces, draggable algorithm recipes and A*, Dijkstra, Greedy, BFS, DFS.",
   "license": "MIT",
   "type": "module",

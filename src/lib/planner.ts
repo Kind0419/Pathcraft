@@ -1,4 +1,5 @@
 import { MinHeap } from './heap'
+import { planContinuous } from './continuous'
 import type {
   CardId,
   CardsState,
@@ -314,7 +315,7 @@ function algorithmLabel(cards: CardsState): string {
   return label
 }
 
-export function plan(
+function planGrid(
   map: GridMap,
   cards: CardsState,
   order: CardId[] = ['smooth', 'round'],
@@ -466,6 +467,7 @@ export function plan(
   if (goalKey < 0) {
     return {
       status: 'infeasible',
+      continuous: false,
       path: [],
       rawPath: [],
       events,
@@ -503,6 +505,7 @@ export function plan(
 
   return {
     status: 'success',
+    continuous: false,
     path,
     rawPath,
     events,
@@ -522,4 +525,13 @@ export function plan(
     algorithmLabel: algorithmLabel(cards),
     openAtEnd,
   }
+}
+
+export function plan(
+  map: GridMap,
+  cards: CardsState,
+  order: CardId[] = ['smooth', 'round'],
+): PlanResult {
+  if (strategyMode(cards) >= 6) return planContinuous(map, cards, order)
+  return planGrid(map, cards, order)
 }

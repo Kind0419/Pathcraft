@@ -65,6 +65,7 @@ export type PlanStatus = 'success' | 'infeasible'
 
 export interface PlanResult {
   status: PlanStatus
+  continuous: boolean
   path: Point[]
   rawPath: Point[]
   events: SearchEvent[]

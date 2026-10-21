@@ -33,7 +33,7 @@ import {
   useLang,
   type Lang,
 } from './lib/i18n'
-import { getMap, mapFromCells, MAPS } from './lib/maps'
+import { getMap, mapFromCells, MAPS, MAP_LIMITS, clampMapSize, findFreeCell, resizeCells } from './lib/maps'
 import { plan } from './lib/planner'
 import type {
   CardId,
@@ -54,10 +54,15 @@ interface MetricSnapshot {
 }
 
 const DEFAULT_MAP_ID: MapId = 'clutter'
-const VERSION = '0.4.0'
+const VERSION = '0.5.0'
 
 function clampCardValue(id: CardId, value: number): number {
   const def = CARD_BY_ID[id]
+  if (def.kind === 'choice') {
+    const last = Math.max(0, (def.options?.length ?? 1) - 1)
+    if (!Number.isFinite(value)) return def.defaultValue
+    return Math.min(last, Math.max(0, Math.round(value)))
+  }
   const min = def.min ?? 0
   const max = def.max ?? 1
   if (!Number.isFinite(value)) return def.defaultValue
@@ -94,6 +99,7 @@ function readRecipeFromUrl(): {
   start: Point
   goal: Point
   cells: Uint8Array | null
+  size: { width: number; height: number } | null
 } | null {
   if (typeof window === 'undefined') return null
   const hash = window.location.hash
@@ -106,6 +112,8 @@ function readRecipeFromUrl(): {
       s?: number[]
       g?: number[]
       x?: string
+      w?: number
+      h?: number
     }
     const mapId = payload.m as MapId
     if (!MAPS.some((map) => map.id === mapId)) return null
@@ -126,8 +134,30 @@ function readRecipeFromUrl(): {
           ),
         )
       : createDefaultRecipeOrder()
+
+    const requested =
+      typeof payload.w === 'number' && typeof payload.h === 'number'
+        ? clampMapSize(payload.w, payload.h)
+        : null
+    const decoded =
+      typeof payload.x === 'string'
+        ? decodeCells(
+            payload.x,
+            (requested?.width ?? baseMap.width) *
+              (requested?.height ?? baseMap.height),
+          )
+        : null
+    const size = requested && decoded ? requested : null
+    const width = size?.width ?? baseMap.width
+    const height = size?.height ?? baseMap.height
+    const gridCells = decoded ?? baseMap.cells
+
     const readPoint = (entry: number[] | undefined, fallback: Point): Point => {
-      if (!Array.isArray(entry) || entry.length < 2) return { ...fallback }
+      const fallbackPoint =
+        fallback.x > 0 && fallback.y > 0 && fallback.x < width - 1 && fallback.y < height - 1
+          ? fallback
+          : findFreeCell(gridCells, width, height, { x: 2, y: 2 })
+      if (!Array.isArray(entry) || entry.length < 2) return { ...fallbackPoint }
       const x = Math.round(Number(entry[0]))
       const y = Math.round(Number(entry[1]))
       if (
@@ -135,25 +165,24 @@ function readRecipeFromUrl(): {
         !Number.isFinite(y) ||
         x < 0 ||
         y < 0 ||
-        x >= baseMap.width ||
-        y >= baseMap.height ||
-        baseMap.cells[y * baseMap.width + x] === 1
+        x >= width ||
+        y >= height ||
+        gridCells[y * width + x] === 1
       ) {
-        return { ...fallback }
+        return { ...fallbackPoint }
       }
       return { x, y }
     }
     let start = readPoint(payload.s, baseMap.start)
     let goal = readPoint(payload.g, baseMap.goal)
     if (start.x === goal.x && start.y === goal.y) {
-      start = { ...baseMap.start }
-      goal = { ...baseMap.goal }
+      start = findFreeCell(gridCells, width, height, { x: 2, y: 2 })
+      goal = findFreeCell(gridCells, width, height, {
+        x: width - 3,
+        y: height - 3,
+      })
     }
-    const cells =
-      typeof payload.x === 'string'
-        ? decodeCells(payload.x, baseMap.width * baseMap.height)
-        : null
-    return { mapId, cards, order, start, goal, cells }
+    return { mapId, cards, order, start, goal, cells: decoded, size }
   } catch {
     return null
   }
@@ -168,6 +197,7 @@ function serializeRecipe(
   start: Point,
   goal: Point,
   cells: Uint8Array | null,
+  size: { width: number; height: number } | null,
 ): string {
   const compact = {
     m: mapId,
@@ -175,6 +205,8 @@ function serializeRecipe(
     s: [start.x, start.y],
     g: [goal.x, goal.y],
     x: cells ? encodeCells(cells) : undefined,
+    w: cells ? size?.width : undefined,
+    h: cells ? size?.height : undefined,
     c: Object.fromEntries(
       CARD_DEFS.map((def) => [
         def.id,
@@ -208,6 +240,11 @@ function compileFormula(
     lang,
     CARD_BY_ID.strategy.options?.[modeIndex] ?? 'A*',
   )
+  if (modeIndex >= 6) {
+    return lang === 'en'
+      ? `${modeLabel}: sample → steer → collision check → tree/roadmap → path`
+      : `${modeLabel}：采样 → 步进 → 碰撞检查 → 树 / 路线图 → 路径`
+  }
   const ignoreHeuristic = modeIndex === 1 || modeIndex === 3 || modeIndex === 4
   const lengthWeight = cards.lengthWeight.enabled
     ? `${cards.lengthWeight.value.toFixed(2)}·g`
@@ -267,6 +304,16 @@ function diagnoseInfeasible(
   result: PlanResult,
   lang: Lang = 'zh',
 ): { title: string; hint: string; card: CardId | null } {
+  if (result.continuous) {
+    return {
+      title: tr(lang, '采样未连通'),
+      hint:
+        lang === 'en'
+          ? 'The sampler did not connect start and goal. Raise "Expansion budget", reduce "Safety inflation", or switch to PRM / Visibility graph.'
+          : '采样没有连通起点和终点。提高「扩展预算」、减小「安全膨胀」，或换 PRM / 可见性图。',
+      card: 'budget',
+    }
+  }
   if (
     cards.budget.enabled &&
     result.expanded >= Math.floor(cards.budget.value)
@@ -457,7 +504,7 @@ function MetricsPanel({
           ) : null}
         </div>
         <p className="hero-context">
-          {localizeAlgorithm(lang, result.algorithmLabel)} · {cards.diagonal.enabled ? tr(lang, '8 邻域') : tr(lang, '4 邻域')} ·{' '}
+          {localizeAlgorithm(lang, result.algorithmLabel)} · {result.continuous ? tr(lang, '连续空间') : cards.diagonal.enabled ? tr(lang, '8 邻域') : tr(lang, '4 邻域')} ·{' '}
           {plural(lang, result.waypoints, '个路径点', 'waypoint')}
         </p>
       </div>
@@ -618,6 +665,7 @@ function CardInspector({
   map,
   cards,
   order,
+  continuous,
   onToggle,
   onValue,
   onAdjustStart,
@@ -628,6 +676,7 @@ function CardInspector({
   map: GridMap
   cards: CardsState
   order: CardId[]
+  continuous: boolean
   onToggle: () => void
   onValue: (value: number) => void
   onAdjustStart: () => void
@@ -648,7 +697,7 @@ function CardInspector({
   const [scanning, setScanning] = useState(false)
 
   useEffect(() => {
-    if (!hasSlider) {
+    if (!hasSlider || (continuous && id === 'strategy')) {
       setScanning(false)
       return
     }
@@ -656,7 +705,7 @@ function CardInspector({
     const timer = window.setTimeout(() => {
       setScanState({
         id,
-        scan: scanFeasibility(map, cards, order, id, 25),
+        scan: scanFeasibility(map, cards, order, id, continuous ? 6 : 25),
       })
       setScanning(false)
     }, 220)
@@ -664,7 +713,7 @@ function CardInspector({
       window.clearTimeout(timer)
       setScanning(false)
     }
-  }, [id, map, cards, order, hasSlider])
+  }, [id, map, cards, order, hasSlider, continuous])
 
   const scan = scanState?.id === id ? scanState.scan : null
   const formatBound = (value: number) => {
@@ -905,8 +954,8 @@ function RunPanel({
           </strong>
         </div>
         <div>
-          <span>{tr(lang, '邻域')}</span>
-          <strong>{cards.diagonal.enabled ? tr(lang, '8 邻域，禁止穿角') : tr(lang, '4 邻域')}</strong>
+          <span>{tr(lang, result.continuous ? '空间' : '邻域')}</span>
+          <strong>{result.continuous ? tr(lang, '连续空间') : cards.diagonal.enabled ? tr(lang, '8 邻域，禁止穿角') : tr(lang, '4 邻域')}</strong>
         </div>
         <div>
           <span>{tr(lang, '启发式')}</span>
@@ -951,9 +1000,9 @@ function RunPanel({
         {lang === 'en' ? (
           <>
             <p>
-              Current model: 2D grid, point robot, no dynamics. Length and clearance
-              are converted using {map.cellSize.toFixed(1)} m per cell; speed,
-              acceleration and other dynamic metrics are not modeled.
+              Current model: 2D grid and continuous space, point robot, no dynamics.
+              Length and clearance are converted using {map.cellSize.toFixed(1)} m
+              per cell; speed, acceleration and other dynamic metrics are not modeled.
             </p>
             <p>
               The workbench focuses on the full search + cost + hard-constraint +
@@ -964,8 +1013,9 @@ function RunPanel({
         ) : (
           <>
             <p>
-              当前模型是 2D 栅格、点机器人、无动力学。路径长度和间隙按{' '}
-              {map.cellSize.toFixed(1)} m / {tr(lang, '格')}换算；速度、加速度等动力学指标尚未加入。
+              当前模型是 2D 栅格 + 连续空间、点机器人、无动力学。路径长度和间隙按{' '}
+              {map.cellSize.toFixed(1)} m / {tr(lang, '格')}换算；连续模式复用同一障碍场和
+              clearance，速度、加速度等动力学指标尚未加入。
             </p>
             <p>
               本工作台聚焦“搜索 + 代价 + 硬约束 + 桥接”的完整链路，不绑定某一种具体规划栈。
@@ -978,7 +1028,7 @@ function RunPanel({
         <Icon name="check" size={14} />
         {tr(lang, '同一场景 + 同一配方 + 同一 seed，结果可复现。')}
       </div>
-      <p className="about-credit">Pathcraft 0.4.0 · © 2026 Kind0419 · MIT License</p>
+      <p className="about-credit">Pathcraft 0.5.0 · © 2026 Kind0419 · MIT License</p>
     </div>
   )
 }
@@ -1207,10 +1257,14 @@ export default function App() {
   const [replayNonce, setReplayNonce] = useState(0)
   const [isAdjusting, setIsAdjusting] = useState(false)
   const [ghostPath, setGhostPath] = useState<Point[]>([])
+  const [ghostContinuous, setGhostContinuous] = useState(false)
   const [previousMetrics, setPreviousMetrics] = useState<MetricSnapshot | null>(null)
   const [toast, setToast] = useState<string | null>(null)
   const [editedCells, setEditedCells] = useState<Uint8Array | null>(
     () => INITIAL_RECIPE?.cells ?? null,
+  )
+  const [customSize, setCustomSize] = useState<{ width: number; height: number } | null>(
+    () => INITIAL_RECIPE?.size ?? null,
   )
   const [editingMap, setEditingMap] = useState(false)
   const [brushMode, setBrushMode] = useState<'wall' | 'erase'>('wall')
@@ -1229,10 +1283,25 @@ export default function App() {
 
   const baseMap = useMemo(() => getMap(mapId), [mapId])
   const map = useMemo(
-    () => (editedCells ? mapFromCells(baseMap, editedCells) : baseMap),
-    [baseMap, editedCells],
+    () =>
+      editedCells
+        ? mapFromCells(
+            baseMap,
+            editedCells,
+            customSize?.width ?? baseMap.width,
+            customSize?.height ?? baseMap.height,
+          )
+        : baseMap,
+    [baseMap, editedCells, customSize],
   )
-  const isCustomMap = editedCells !== null
+  const isCustomMap = editedCells !== null || customSize !== null
+  const [sizeDraft, setSizeDraft] = useState(() => ({
+    width: INITIAL_RECIPE?.size?.width ?? baseMap.width,
+    height: INITIAL_RECIPE?.size?.height ?? baseMap.height,
+  }))
+  useEffect(() => {
+    setSizeDraft({ width: map.width, height: map.height })
+  }, [map.width, map.height, mapId])
   const [start, setStart] = useState<Point>(
     () => INITIAL_RECIPE?.start ?? { ...map.start },
   )
@@ -1264,6 +1333,7 @@ export default function App() {
     const previous = previousRunRef.current
     if (previous && previous.result !== result && previous.mapId === mapId) {
       setGhostPath(previous.result.path)
+        setGhostContinuous(previous.result.continuous)
       setPreviousMetrics(metricSnapshot(previous.result, activeMap))
     }
     previousRunRef.current = { result, mapId }
@@ -1327,9 +1397,17 @@ export default function App() {
   }, [recipeOrder])
 
   useEffect(() => {
-    const hash = `#r=${serializeRecipe(mapId, cards, recipeOrder, start, goal, editedCells)}`
+    const hash = `#r=${serializeRecipe(
+      mapId,
+      cards,
+      recipeOrder,
+      start,
+      goal,
+      editedCells,
+      customSize,
+    )}`
     window.history.replaceState(null, '', hash)
-  }, [mapId, cards, recipeOrder, start, goal, editedCells])
+  }, [mapId, cards, recipeOrder, start, goal, editedCells, customSize])
 
   useEffect(() => {
     window.localStorage.setItem('pathcraft:lang:v1', lang)
@@ -1442,9 +1520,13 @@ export default function App() {
   const formula = compileFormula(effectiveCards, recipeOrder)
   const selectedState = selectedCardId ? effectiveCards[selectedCardId] : null
   const stageLabel =
-    effectiveCards.smooth.enabled || effectiveCards.round.enabled
-      ? '图搜索 · 桥接'
-      : '图搜索'
+    result.continuous
+      ? effectiveCards.smooth.enabled || effectiveCards.round.enabled
+        ? '连续规划 · 桥接'
+        : '连续规划'
+      : effectiveCards.smooth.enabled || effectiveCards.round.enabled
+        ? '图搜索 · 桥接'
+        : '图搜索'
 
   function updateCard(id: CardId, patch: Partial<{ enabled: boolean; value: number }>) {
     setCards((current) => ({
@@ -1584,7 +1666,7 @@ export default function App() {
         for (let dx = -offset; dx < brushSize - offset; dx += 1) {
           const x = cx + dx
           const y = cy + dy
-          if (x <= 0 || y <= 0 || x >= baseMap.width - 1 || y >= baseMap.height - 1) {
+          if (x <= 0 || y <= 0 || x >= map.width - 1 || y >= map.height - 1) {
             continue
           }
           if (
@@ -1593,7 +1675,7 @@ export default function App() {
           ) {
             continue
           }
-          next[y * baseMap.width + x] = brushMode === 'wall' ? 1 : 0
+          next[y * map.width + x] = brushMode === 'wall' ? 1 : 0
         }
       }
       return next
@@ -1601,22 +1683,64 @@ export default function App() {
   }
 
   function clearMap() {
-    const cells = new Uint8Array(baseMap.cells.length)
-    for (let x = 0; x < baseMap.width; x += 1) {
+    const cells = new Uint8Array(map.width * map.height)
+    for (let x = 0; x < map.width; x += 1) {
       cells[x] = 1
-      cells[(baseMap.height - 1) * baseMap.width + x] = 1
+      cells[(map.height - 1) * map.width + x] = 1
     }
-    for (let y = 0; y < baseMap.height; y += 1) {
-      cells[y * baseMap.width] = 1
-      cells[y * baseMap.width + baseMap.width - 1] = 1
+    for (let y = 0; y < map.height; y += 1) {
+      cells[y * map.width] = 1
+      cells[y * map.width + map.width - 1] = 1
     }
-    cells[start.y * baseMap.width + start.x] = 0
-    cells[goal.y * baseMap.width + goal.x] = 0
+    cells[start.y * map.width + start.x] = 0
+    cells[goal.y * map.width + goal.x] = 0
     setEditedCells(cells)
+  }
+
+  function applyMapSize() {
+    const next = clampMapSize(sizeDraft.width, sizeDraft.height)
+    const source = editedCells ?? map.cells
+    const cells = resizeCells(
+      source,
+      map.width,
+      map.height,
+      next.width,
+      next.height,
+    )
+
+    let nextStart = findFreeCell(cells, next.width, next.height, {
+      x: start.x + Math.floor((next.width - map.width) / 2),
+      y: start.y + Math.floor((next.height - map.height) / 2),
+    })
+    let nextGoal = findFreeCell(cells, next.width, next.height, {
+      x: goal.x + Math.floor((next.width - map.width) / 2),
+      y: goal.y + Math.floor((next.height - map.height) / 2),
+    })
+    if (nextStart.x === nextGoal.x && nextStart.y === nextGoal.y) {
+      nextGoal = findFreeCell(cells, next.width, next.height, {
+        x: next.width - 3,
+        y: next.height - 3,
+      })
+    }
+    cells[nextStart.y * next.width + nextStart.x] = 0
+    cells[nextGoal.y * next.width + nextGoal.x] = 0
+
+    setEditedCells(cells)
+    setCustomSize(next)
+    setSizeDraft(next)
+    setStart(nextStart)
+    setGoal(nextGoal)
+    setEditingMap(true)
+    setToast(
+      lang === 'en'
+        ? `Map resized to ${next.width} × ${next.height}`
+        : `地图规格已更新为 ${next.width} × ${next.height}`,
+    )
   }
 
   function restorePresetMap() {
     setEditedCells(null)
+    setCustomSize(null)
     setStart({ ...baseMap.start })
     setGoal({ ...baseMap.goal })
     setEditingMap(false)
@@ -1627,11 +1751,13 @@ export default function App() {
     const nextMap = getMap(nextMapId)
     setMapId(nextMapId)
     setEditedCells(null)
+    setCustomSize(null)
     setEditingMap(false)
     setStart({ ...nextMap.start })
     setGoal({ ...nextMap.goal })
     setEditMode('none')
     setGhostPath([])
+    setGhostContinuous(false)
     setPreviousMetrics(null)
     setPlayhead(0)
     setReplayNonce((value) => value + 1)
@@ -1642,6 +1768,7 @@ export default function App() {
     setCards(createDefaultCards())
     setMapId(DEFAULT_MAP_ID)
     setEditedCells(null)
+    setCustomSize(null)
     setEditingMap(false)
     setStart({ ...resetMap.start })
     setGoal({ ...resetMap.goal })
@@ -1650,6 +1777,7 @@ export default function App() {
     setSelectedCardId(null)
     setRightTab('recipe')
     setGhostPath([])
+    setGhostContinuous(false)
     setPreviousMetrics(null)
     setPlayhead(0)
     setReplayNonce((value) => value + 1)
@@ -1778,7 +1906,11 @@ export default function App() {
         <div className="topbar-meta">
           <span className="stage-pill">
             <span className="stage-dot" />
-            {lang === 'en' ? 'Graph search' : stageLabel}
+            {lang === 'en'
+              ? result.continuous
+                ? 'Continuous'
+                : 'Graph search'
+              : stageLabel}
           </span>
           <span className="topbar-divider" />
           <span className="topbar-grid">
@@ -1916,9 +2048,19 @@ export default function App() {
                 {isCustomMap ? <span className="custom-map-badge">{tr(lang, '已编辑')}</span> : null}
               </h2>
               <p>{tr(lang, map.description)}</p>
+              {result.continuous ? (
+                <span className="stage-note">
+                  {lang === 'en'
+                    ? 'Continuous mode ignores heuristic, neighborhood, corner-cut and U-turn cards. Clearance, length, budget and post-processing still apply.'
+                    : '连续模式不参与：启发式、邻域、允许切角、禁止掉头、最大转角、目标容差；间隙、长度、预算与后处理仍然生效。'}
+                </span>
+              ) : null}
             </div>
             <div className="stage-actions">
               <span className="stage-algorithm">{localizeAlgorithm(lang, result.algorithmLabel)}</span>
+                <span className={`stage-space ${result.continuous ? 'is-continuous' : ''}`}>
+                  {tr(lang, result.continuous ? '连续空间' : '栅格空间')}
+                </span>
               <span className={result.status === 'success' ? 'is-ok' : 'is-bad'}>
                 <span
                   className={`status-dot ${
@@ -2091,6 +2233,49 @@ export default function App() {
                   </button>
                 ))}
               </div>
+              <div className="map-size-editor">
+                <span>{tr(lang, '规格')}</span>
+                <input
+                  type="number"
+                  min={MAP_LIMITS.minWidth}
+                  max={MAP_LIMITS.maxWidth}
+                  value={sizeDraft.width}
+                  aria-label={lang === 'en' ? 'Map width in cells' : '地图列数'}
+                  onChange={(event) =>
+                    setSizeDraft((current) => ({
+                      ...current,
+                      width: Number(event.target.value),
+                    }))
+                  }
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') applyMapSize()
+                  }}
+                />
+                <span>×</span>
+                <input
+                  type="number"
+                  min={MAP_LIMITS.minHeight}
+                  max={MAP_LIMITS.maxHeight}
+                  value={sizeDraft.height}
+                  aria-label={lang === 'en' ? 'Map height in cells' : '地图行数'}
+                  onChange={(event) =>
+                    setSizeDraft((current) => ({
+                      ...current,
+                      height: Number(event.target.value),
+                    }))
+                  }
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') applyMapSize()
+                  }}
+                />
+                <button type="button" onClick={applyMapSize}>
+                  {tr(lang, '应用')}
+                </button>
+                <em>
+                  {MAP_LIMITS.minWidth}–{MAP_LIMITS.maxWidth} ×{' '}
+                  {MAP_LIMITS.minHeight}–{MAP_LIMITS.maxHeight}
+                </em>
+              </div>
               <div className="edit-actions">
                 <button type="button" onClick={clearMap}>
                   <Icon name="trash" size={12} />
@@ -2124,6 +2309,7 @@ export default function App() {
               result={result}
               playhead={playhead}
               ghostPath={ghostPath}
+                ghostContinuous={ghostContinuous}
               hoverCard={hoverCard}
               showExpanded={showExpanded}
               showPath={showPath}
@@ -2371,6 +2557,7 @@ export default function App() {
                 map={activeMap}
                 cards={effectiveCards}
                 order={recipeOrder}
+                continuous={result.continuous}
                 onToggle={() =>
                   updateCard(selectedCardId, { enabled: !selectedState.enabled })
                 }

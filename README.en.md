@@ -7,33 +7,36 @@ Build path-planning algorithms from parameter cards and watch the search, execut
 
 [Live Demo](https://Kind0419.github.io/Pathcraft/) · [GitHub](https://github.com/Kind0419/Pathcraft) · [MIT License](LICENSE)
 
-> Status: `0.4.0` · 2D grid · React + TypeScript + Canvas
+> Status: `0.5.0` · 2D grid + continuous · React + TypeScript + Canvas
 
-[![Pathcraft interactive demo](https://Kind0419.github.io/Pathcraft/preview-en.png?v=1)](https://Kind0419.github.io/Pathcraft/)
+[![Pathcraft interactive demo](https://Kind0419.github.io/Pathcraft/preview-en.png?v=2)](https://Kind0419.github.io/Pathcraft/)
 
-> GitHub README is static Markdown, so the app cannot run inside it. Click the GIF above, or open <https://Kind0419.github.io/Pathcraft/> for the interactive version.
+> GitHub README is static Markdown, so the app cannot run inside it. Click the screenshot above, or open <https://Kind0419.github.io/Pathcraft/> for the interactive version.
 
 ---
 
 ## What it is
 
-Pathcraft is a 2D grid path-planning workbench that runs in the browser.
+Pathcraft is a 2D path-planning workbench that runs in the browser. It supports both **grid graph search** and **continuous-space sampling planners**.
 
 It decomposes planning into composable parameter modules:
 
-- **Search**: A*, Dijkstra, greedy best-first, BFS, DFS, weighted A*
+- **Search**: A*, Dijkstra, greedy best-first, BFS, DFS, weighted A*; RRT, RRT*, PRM, visibility graph
 - **Cost**: clearance, turn, length, diagonal bias, goal tolerance
 - **Constraints**: safety inflation, max turn, no U-turn, corner cut, expansion budget
 - **Post-process**: line-of-sight straightening, Chaikin smoothing (passes), path thinning (tolerance)
 
-Pick modules from the component library, tune values in the assembly table, and watch the search frontier, final path and previous path update in the canvas. The Flow tab maps the current replay frame to the actual execution branch and shows the queue, expanded states and each card's compile site.
+Pick modules from the component library, tune values in the assembly table, and watch the search frontier, final path and previous path update in the canvas. The Flow tab maps the current replay frame to the actual execution branch and shows the queue, expanded states and each card's compile site. Selecting RRT / RRT* / PRM / Visibility graph switches the canvas to a continuous 2D space and outputs a smooth polyline.
 
 ---
 
 ## Features
 
 - Three 2D maps: Notch, Gate, Clutter
+- Map-size editor: 24–72 columns × 18–56 rows, up to 4032 cells; keeps existing walls and safely relocates start/goal
 - 2D map editing: draw / erase / brush 1·3·5 / clear / restore preset
+- Grid mode: A* / Dijkstra / greedy / BFS / DFS / weighted A*
+- Continuous mode: RRT / RRT* / PRM / visibility graph with smooth continuous paths
 - Click or drag start and goal; markers slide along safe boundaries and snap to the nearest legal cell
 - Search replay: play, pause, timeline, 0.5x / 1x / 2x
 - Search / path / previous-path layer toggles
@@ -55,13 +58,19 @@ Pick modules from the component library, tune values in the assembly table, and 
 
 The Flow tab is not a static diagram. It highlights the branch taken at the current replay frame and shows the current node, g / h / f, open set and expansion state. The assembly table below can be dragged to reorder; hovering a row highlights the affected area on the canvas.
 
-![Pathcraft execution trace](https://Kind0419.github.io/Pathcraft/preview-flow-en.png?v=1)
+![Pathcraft execution trace](https://Kind0419.github.io/Pathcraft/preview-flow-en.png?v=2)
+
+### Continuous space
+
+RRT / RRT* / PRM / Visibility graph turn search points into continuous samples and smooth the final path after collision checking. Map size, safety inflation and start/goal still apply.
+
+![Pathcraft continuous planning](https://Kind0419.github.io/Pathcraft/preview-continuous-en.png?v=2)
 
 ---
 
 ## Algorithm scope
 
-The current build covers the classic **graph-search backbone**, switchable from the Search strategy card:
+### Grid graph search
 
 | Strategy | Priority |
 |---|---|
@@ -72,7 +81,18 @@ The current build covers the classic **graph-search backbone**, switchable from 
 | BFS | FIFO insertion order |
 | DFS | LIFO order |
 
-Not yet included: RRT / RRT* / PRM, D* Lite, JPS, IDA*, bidirectional search, Beam, ACO, genetic algorithms.
+### Continuous 2D space
+
+| Strategy | Method |
+|---|---|
+| RRT | random sample + nearest neighbour + steer + collision check |
+| RRT* | RRT + neighbourhood rewiring for shorter paths |
+| PRM | sampled roadmap + k-nearest connections + Dijkstra |
+| Visibility graph | free-space roadmap + 8-neighbour links + visible shortcuts + Dijkstra |
+
+Continuous planners apply one line-of-sight shortcut pass, round corners where clearance allows, then honour the line-of-sight / Chaikin / thinning cards. Safety inflation is used for sampled points, edge collision and corner rounding.
+
+Not yet included: D* Lite, JPS, IDA*, bidirectional search, Beam, ACO, genetic algorithms.
 
 ---
 
@@ -103,30 +123,31 @@ pnpm build
 pnpm bundle
 ```
 
-- `pnpm build`: type-check + Vite build, output in `dist/`
+- `pnpm build`: typecheck + Vite build, output in `dist/`
 - `pnpm bundle`: writes `release/Pathcraft.html`
-- The single-file build opens offline with a double-click
+- The single-file build opens offline by double-clicking
 
 ---
 
-## Project structure
+## Project layout
 
 ```text
 src/
-  App.tsx                 layout, state, URL, dragging, parameter scan, export
-  styles.css              single design system
+  App.tsx                 layout, state, URL, drag, map size, checks, export
+  styles.css              one design system
   components/
-    CanvasView.tsx        Canvas2D drawing, hit testing, start/goal, zoom, brush
-    Card.tsx              assembly row, slider, switch, choice chips
-    FlowPanel.tsx         execution trace, compile sites, flow dragging
+    CanvasView.tsx        Canvas2D drawing, hit testing, markers, zoom, brush, continuous paths
+    Card.tsx              assembly rows, sliders, switches, choice chips
+    FlowPanel.tsx         grid / continuous execution trace, compile sites, drag reorder
     Icon.tsx              line icons
   lib/
     types.ts              shared types
-    cards.ts              16 cards, parameter symbols, compile sites, defaults
-    maps.ts               preset maps, clearance
-    planner.ts            graph search, priorities, costs, constraints
-    feasibility.ts        parameter feasibility scan
-    i18n.tsx              Chinese/English strings and language context
+    cards.ts              16 cards, symbols, compile sites, defaults
+    maps.ts               presets, size limits, clearance
+    planner.ts            grid search, strategy priority, cost, constraints, dispatch
+    continuous.ts         RRT / RRT* / PRM / visibility, collision, smoothing
+    feasibility.ts        feasible-range scan
+    i18n.tsx              Chinese / English strings and context
     heap.ts               MinHeap
 scripts/
   check.ts                planner smoke checks
@@ -144,7 +165,7 @@ pnpm typecheck
 pnpm build
 ```
 
-If you changed the planner:
+If you touched the planner, also run:
 
 ```bash
 pnpm exec tsx scripts/check.ts
