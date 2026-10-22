@@ -1,4 +1,5 @@
 import {
+  useCallback,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -1255,9 +1256,15 @@ export default function App() {
   const [playing, setPlaying] = useState(false)
   const [speed, setSpeed] = useState(1)
   const [replayNonce, setReplayNonce] = useState(0)
-  const [isAdjusting, setIsAdjusting] = useState(false)
   const [ghostPath, setGhostPath] = useState<Point[]>([])
   const [ghostContinuous, setGhostContinuous] = useState(false)
+  // True from pointerdown to pointerup on a slider or a map marker. The route is
+  // recomputed on every tick / every cell the pointer crosses, so without this
+  // the "previous route" would follow the drag and end up identical to the live
+  // one -- a dashed line drawn exactly under the solid one, which reads as no
+  // comparison at all. While a gesture runs the ghost is frozen at the route the
+  // drag started from, which is the baseline you are actually editing against.
+  const gestureRef = useRef(false)
   const [previousMetrics, setPreviousMetrics] = useState<MetricSnapshot | null>(null)
   const [toast, setToast] = useState<string | null>(null)
   const [editedCells, setEditedCells] = useState<Uint8Array | null>(
@@ -1332,12 +1339,38 @@ export default function App() {
   useEffect(() => {
     const previous = previousRunRef.current
     if (previous && previous.result !== result && previous.mapId === mapId) {
-      setGhostPath(previous.result.path)
+      // While a gesture is in flight the intermediate solves are not baselines,
+      // they are this gesture's own ticks; only record the first step, which is
+      // the state the user pressed down on.
+      if (!gestureRef.current) {
+        setGhostPath(previous.result.path)
         setGhostContinuous(previous.result.continuous)
-      setPreviousMetrics(metricSnapshot(previous.result, activeMap))
+        setPreviousMetrics(metricSnapshot(previous.result, activeMap))
+      }
     }
     previousRunRef.current = { result, mapId }
   }, [result, activeMap, mapId])
+
+  /**
+   * Freezes the comparison baseline at the first frame of a drag gesture: the
+   * route that is on screen when the pointer goes down. Without the freeze the
+   * baseline would chase the live route tick by tick and land exactly on top of
+   * it, which reads as no comparison at all.
+   */
+  const beginGesture = useCallback(() => {
+    gestureRef.current = true
+    setGhostPath(result.path)
+    setGhostContinuous(result.continuous)
+    setPreviousMetrics(metricSnapshot(result, activeMap))
+    setPlaying(false)
+    setPlayhead(result.events.length)
+  }, [result, activeMap])
+
+  /** Unfreezes it; the next solve then becomes the new baseline as usual. */
+  const endGesture = useCallback(() => {
+    gestureRef.current = false
+    setReplayNonce((value) => value + 1)
+  }, [])
 
   useEffect(() => {
     setPlaying(false)
@@ -2319,6 +2352,7 @@ export default function App() {
               editMode={editMode}
               onStartChange={setStart}
               onGoalChange={setGoal}
+              onMarkerDrag={(active) => (active ? beginGesture() : endGesture())}
               onPlacePoint={() => setEditMode('none')}
               onInvalidPoint={setToast}
               mapEditMode={editingMap ? brushMode : null}
@@ -2511,13 +2545,10 @@ export default function App() {
                             })
                           }
                           onAdjustStart={() => {
-                            setIsAdjusting(true)
-                            setPlaying(false)
-                            setPlayhead(result.events.length)
+                            beginGesture()
                           }}
                           onAdjustEnd={() => {
-                            setIsAdjusting(false)
-                            setReplayNonce((value) => value + 1)
+                            endGesture()
                           }}
                           draggable
                           dragging={draggedCard === id}
@@ -2569,13 +2600,10 @@ export default function App() {
                   })
                 }
                 onAdjustStart={() => {
-                  setIsAdjusting(true)
-                  setPlaying(false)
-                  setPlayhead(result.events.length)
+                  beginGesture()
                 }}
                 onAdjustEnd={() => {
-                  setIsAdjusting(false)
-                  setReplayNonce((value) => value + 1)
+                  endGesture()
                 }}
               />
             ) : (

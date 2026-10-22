@@ -18,6 +18,7 @@ interface CanvasViewProps {
   editMode: EditMode
   onStartChange: (point: Point) => void
   onGoalChange: (point: Point) => void
+  onMarkerDrag?: (active: boolean) => void
   onPlacePoint: () => void
   onInvalidPoint?: (message: string) => void
   mapEditMode: 'wall' | 'erase' | null
@@ -176,6 +177,7 @@ export function CanvasView({
   editMode,
   onStartChange,
   onGoalChange,
+  onMarkerDrag,
   onPlacePoint,
   onInvalidPoint,
   mapEditMode,
@@ -1054,6 +1056,7 @@ export function CanvasView({
 
     event.preventDefault()
     dragMarkerRef.current = nearStart ? 'start' : 'goal'
+    onMarkerDrag?.(true)
     try {
       canvas.setPointerCapture(event.pointerId)
     } catch {
@@ -1105,6 +1108,7 @@ export function CanvasView({
     }
     if (!dragMarkerRef.current) return
     dragMarkerRef.current = null
+    onMarkerDrag?.(false)
     try {
       if (event.currentTarget.hasPointerCapture(event.pointerId)) {
         event.currentTarget.releasePointerCapture(event.pointerId)
