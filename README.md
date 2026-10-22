@@ -7,7 +7,7 @@
 
 [Live Demo](https://Kind0419.github.io/Pathcraft/) · [GitHub](https://github.com/Kind0419/Pathcraft) · [MIT License](LICENSE)
 
-> Status: `0.5.0` · 2D grid + continuous · React + TypeScript + Canvas
+> Status: `0.5.1` · 2D grid + continuous · React + TypeScript + Canvas
 
 [![Pathcraft interactive demo](https://Kind0419.github.io/Pathcraft/preview.gif?v=4)](https://Kind0419.github.io/Pathcraft/)
 
@@ -38,7 +38,7 @@ Pathcraft 是一个运行在浏览器里的 2D 路径规划实验台，同时支
 - 栅格模式：A* / Dijkstra / 贪心 / BFS / DFS / 加权 A*
 - 连续模式：RRT / RRT* / PRM / 可见性图，输出光滑连续路径
 - 起终点点击与拖动；靠近障碍时沿安全边界滑动，并按格吸附到最近合法格
-- 搜索回放：播放、暂停、时间轴、0.5x / 1x / 2x
+- 搜索回放：播放、暂停、时间轴、0.5x / 1x / 2x；播放时路径从起点沿轨迹生长到终点
 - 搜索 / 路径 / 旧路径图层开关
 - 画布 80%–105% 缩放；滚轮或 `− / +`
 - 「专注」收起两侧面板，地图最大化

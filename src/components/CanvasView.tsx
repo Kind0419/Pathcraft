@@ -82,6 +82,52 @@ function pathsEqual(a: Point[], b: Point[]): boolean {
   return true
 }
 
+/**
+ * Trims a polyline to the given fraction of its total length, so the route
+ * visibly grows out of the start and arrives at the goal as playback runs.
+ */
+function trimPath(points: Point[], fraction: number): { points: Point[]; tip: Point | null } {
+  if (points.length < 2) return { points, tip: null }
+  const clamp = Math.max(0, Math.min(1, fraction))
+  if (clamp >= 1) {
+    return { points, tip: points[points.length - 1] }
+  }
+  const lengths: number[] = []
+  let total = 0
+  for (let i = 1; i < points.length; i += 1) {
+    const length = Math.hypot(
+      points[i].x - points[i - 1].x,
+      points[i].y - points[i - 1].y,
+    )
+    lengths.push(length)
+    total += length
+  }
+  if (total < 1e-9 || clamp <= 0) {
+    return { points: [points[0]], tip: { ...points[0] } }
+  }
+  const target = total * clamp
+  const out: Point[] = [points[0]]
+  let travelled = 0
+  for (let i = 0; i < lengths.length; i += 1) {
+    const length = lengths[i]
+    if (travelled + length <= target) {
+      out.push(points[i + 1])
+      travelled += length
+      continue
+    }
+    const t = length <= 1e-9 ? 0 : (target - travelled) / length
+    const from = points[i]
+    const to = points[i + 1]
+    const tip = {
+      x: from.x + (to.x - from.x) * t,
+      y: from.y + (to.y - from.y) * t,
+    }
+    out.push(tip)
+    return { points: out, tip }
+  }
+  return { points: out, tip: out[out.length - 1] }
+}
+
 function resamplePath(points: Point[], count: number): Point[] {
   if (points.length === 0) return []
   if (count <= 1) return [{ ...points[0] }]
@@ -326,7 +372,17 @@ export function CanvasView({
     const ghostOffset = ghostContinuous ? 0 : 0.5
     const eventCount = result.events.length
     const visibleEvents = Math.max(0, Math.min(playhead, eventCount))
-    const pathVisible = result.status === 'success' && showPath && displayPath.length > 1
+    const replaying = visibleEvents < eventCount
+    const progress =
+      eventCount > 0 ? Math.max(0, Math.min(1, visibleEvents / eventCount)) : 1
+    // The route is revealed as the search advances, so playback shows the path
+    // travelling from the start to the goal instead of a finished line sitting
+    // on top of the expanded cells. Scrub or pause and it holds the same point.
+    const reveal = replaying ? progress : 1
+    const grown = trimPath(displayPath, reveal)
+    const pathVisible =
+      result.status === 'success' && showPath && displayPath.length > 1 && grown.points.length > 1
+    const pathPoints = grown.points
 
     ctx.clearRect(0, 0, width, height)
     const paper = ctx.createRadialGradient(
@@ -435,8 +491,8 @@ export function CanvasView({
       }
     }
 
-    // Expanded nodes. The trail steps back once the search has finished so
-    // the final path stays the focus.
+    // Expanded nodes. Once the replay finishes, the trail steps back so the
+    // final path stays the focus.
     if (showExpanded) {
       const completed = visibleEvents >= eventCount
       for (let i = 0; i < visibleEvents; i += 1) {
@@ -464,6 +520,66 @@ export function CanvasView({
           )
         }
       }
+    }
+
+    // Growing route. During replay the final path is drawn only as far as the
+    // search has progressed, so the line visibly travels out of the start and
+    // reaches the goal instead of appearing complete from the first frame.
+    if (pathVisible) {
+      ctx.save()
+      ctx.beginPath()
+      pathPoints.forEach((point, index) => {
+        const px = ox + (point.x + pathOffset) * cell
+        const py = oy + (point.y + pathOffset) * cell
+        if (index === 0) ctx.moveTo(px, py)
+        else ctx.lineTo(px, py)
+      })
+      ctx.lineCap = 'round'
+      ctx.lineJoin = 'round'
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.86)'
+      ctx.lineWidth = Math.max(6, cell * 0.46)
+      ctx.stroke()
+      ctx.save()
+      ctx.shadowColor = 'rgba(47, 93, 80, 0.22)'
+      ctx.shadowBlur = Math.max(5, cell * 0.55)
+      ctx.strokeStyle = '#2f5d50'
+      ctx.lineWidth = Math.max(2.6, cell * 0.23)
+      ctx.stroke()
+      ctx.restore()
+
+      // Waypoint dots and the moving head, so the growth reads as a direction.
+      if (!result.smoothed && pathPoints.length < 90) {
+        for (let i = 1; i < pathPoints.length - 1; i += 2) {
+          const point = pathPoints[i]
+          ctx.beginPath()
+          ctx.arc(
+            ox + (point.x + pathOffset) * cell,
+            oy + (point.y + pathOffset) * cell,
+            Math.max(1.2, cell * 0.075),
+            0,
+            Math.PI * 2,
+          )
+          ctx.fillStyle = '#2f5d50'
+          ctx.fill()
+        }
+      }
+      const tip = grown.tip
+      if (replaying && tip) {
+        ctx.beginPath()
+        ctx.arc(
+          ox + (tip.x + pathOffset) * cell,
+          oy + (tip.y + pathOffset) * cell,
+          Math.max(3, cell * 0.26),
+          0,
+          Math.PI * 2,
+        )
+        ctx.fillStyle = '#a45f43'
+        ctx.fill()
+        ctx.strokeStyle = 'rgba(255,255,255,0.92)'
+        ctx.lineWidth = 1.4
+        ctx.stroke()
+      }
+      ctx.restore()
     }
 
     if (showExpanded && visibleEvents > 0 && visibleEvents < eventCount) {
@@ -521,48 +637,6 @@ export function CanvasView({
       ctx.lineCap = 'round'
       ctx.lineJoin = 'round'
       ctx.stroke()
-      ctx.restore()
-    }
-
-    // Final path. It stays visible while the expansion replays, so the
-    // result and the process can be read at the same time.
-    if (pathVisible) {
-      ctx.save()
-      ctx.beginPath()
-      displayPath.forEach((point, index) => {
-        const px = ox + (point.x + pathOffset) * cell
-        const py = oy + (point.y + pathOffset) * cell
-        if (index === 0) ctx.moveTo(px, py)
-        else ctx.lineTo(px, py)
-      })
-      ctx.lineCap = 'round'
-      ctx.lineJoin = 'round'
-      ctx.strokeStyle = 'rgba(255, 255, 255, 0.86)'
-      ctx.lineWidth = Math.max(6, cell * 0.46)
-      ctx.stroke()
-      ctx.save()
-      ctx.shadowColor = 'rgba(47, 93, 80, 0.22)'
-      ctx.shadowBlur = Math.max(5, cell * 0.55)
-      ctx.strokeStyle = '#2f5d50'
-      ctx.lineWidth = Math.max(2.6, cell * 0.23)
-      ctx.stroke()
-      ctx.restore()
-
-      if (!result.smoothed && displayPath.length < 90) {
-        for (let i = 1; i < displayPath.length - 1; i += 2) {
-          const point = displayPath[i]
-          ctx.beginPath()
-          ctx.arc(
-            ox + (point.x + pathOffset) * cell,
-            oy + (point.y + pathOffset) * cell,
-            Math.max(1.2, cell * 0.075),
-            0,
-            Math.PI * 2,
-          )
-          ctx.fillStyle = '#2f5d50'
-          ctx.fill()
-        }
-      }
       ctx.restore()
     }
 

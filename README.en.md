@@ -7,7 +7,7 @@ Build path-planning algorithms from parameter cards and watch the search, execut
 
 [Live Demo](https://Kind0419.github.io/Pathcraft/) · [GitHub](https://github.com/Kind0419/Pathcraft) · [MIT License](LICENSE)
 
-> Status: `0.5.0` · 2D grid + continuous · React + TypeScript + Canvas
+> Status: `0.5.1` · 2D grid + continuous · React + TypeScript + Canvas
 
 [![Pathcraft interactive demo](https://Kind0419.github.io/Pathcraft/preview-en.png?v=2)](https://Kind0419.github.io/Pathcraft/)
 
@@ -38,7 +38,7 @@ Pick modules from the component library, tune values in the assembly table, and 
 - Grid mode: A* / Dijkstra / greedy / BFS / DFS / weighted A*
 - Continuous mode: RRT / RRT* / PRM / visibility graph with smooth continuous paths
 - Click or drag start and goal; markers slide along safe boundaries and snap to the nearest legal cell
-- Search replay: play, pause, timeline, 0.5x / 1x / 2x
+- Search replay: play, pause, timeline, 0.5x / 1x / 2x; the route grows from start to goal as it runs
 - Search / path / previous-path layer toggles
 - Canvas zoom 80%–105%; mouse wheel or `− / +`
 - Focus mode: hide both side panels and maximize the map

@@ -54,7 +54,7 @@ interface MetricSnapshot {
 }
 
 const DEFAULT_MAP_ID: MapId = 'clutter'
-const VERSION = '0.5.0'
+const VERSION = '0.5.1'
 
 function clampCardValue(id: CardId, value: number): number {
   const def = CARD_BY_ID[id]
@@ -1028,7 +1028,7 @@ function RunPanel({
         <Icon name="check" size={14} />
         {tr(lang, '同一场景 + 同一配方 + 同一 seed，结果可复现。')}
       </div>
-      <p className="about-credit">Pathcraft 0.5.0 · © 2026 Kind0419 · MIT License</p>
+      <p className="about-credit">Pathcraft 0.5.1 · © 2026 Kind0419 · MIT License</p>
     </div>
   )
 }
@@ -1353,11 +1353,13 @@ export default function App() {
     }
     let frame = 0
     const total = result.events.length
-    const duration = Math.max(240, 900 / speed)
+    // Long enough for the route to visibly travel from start to goal, but
+    // capped so a giant expansion does not turn playback into a wait.
+    const duration = Math.min(3800, Math.max(1100, 900 + Math.sqrt(total) * 140)) / speed
     const startedAt = performance.now()
     const tick = (now: number) => {
       const progress = Math.min(1, (now - startedAt) / duration)
-      const eased = 1 - Math.pow(1 - progress, 2.2)
+      const eased = 1 - Math.pow(1 - progress, 1.5)
       setPlayhead(Math.max(1, Math.round(eased * total)))
       if (progress < 1) {
         frame = requestAnimationFrame(tick)
