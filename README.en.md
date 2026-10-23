@@ -7,7 +7,7 @@ Build path-planning algorithms from parameter cards and watch the search, execut
 
 [Live Demo](https://Kind0419.github.io/Pathcraft/) · [GitHub](https://github.com/Kind0419/Pathcraft) · [MIT License](LICENSE)
 
-> Status: `0.5.1` · 2D grid + continuous · React + TypeScript + Canvas
+> Status: `0.7.0` · 2D grid + continuous + 3D voxel / field · React + TypeScript + Canvas
 
 [![Pathcraft interactive demo](https://Kind0419.github.io/Pathcraft/preview-en.png?v=2)](https://Kind0419.github.io/Pathcraft/)
 
@@ -17,7 +17,7 @@ Build path-planning algorithms from parameter cards and watch the search, execut
 
 ## What it is
 
-Pathcraft is a 2D path-planning workbench that runs in the browser. It supports both **grid graph search** and **continuous-space sampling planners**.
+Pathcraft is a path-planning workbench that runs in the browser, covering four spaces — **2D grids**, **2D and 3D continuous fields**, and **3D voxels** — behind one set of composable cards, one replay, and one set of metrics.
 
 It decomposes planning into composable parameter modules:
 
@@ -32,11 +32,12 @@ Pick modules from the component library, tune values in the assembly table, and 
 
 ## Features
 
-- Three 2D maps: Notch, Gate, Clutter
+- Eight scenes in three groups: Grid 2D (Notch, Gate, Clutter), Voxel 3D (Hangar, Shaft, Grove), Continuous (Round hall, Floating grove)
 - Map-size editor: 24–72 columns × 18–56 rows, up to 4032 cells; keeps existing walls and safely relocates start/goal
 - 2D map editing: draw / erase / brush 1·3·5 / clear / restore preset
 - Grid mode: A* / Dijkstra / greedy / BFS / DFS / weighted A* / JPS / IDA* / bidirectional A* / Beam / D* Lite
 - Continuous mode: RRT / RRT* / PRM / visibility graph with smooth continuous paths
+- 3D view: orthographic (drag to orbit, scroll to zoom, reset); voxel worlds draw exposed faces only, the route is tinted by altitude, and columns really do occlude the route behind them
 - Click or drag start and goal; markers slide along safe boundaries and snap to the nearest legal cell
 - Search replay: play, pause, timeline, 0.5x / 1x / 2x; the route grows from start to goal as it runs
 - Search / path / previous-path layer toggles
@@ -66,9 +67,24 @@ RRT / RRT* / PRM / Visibility graph turn search points into continuous samples a
 
 ![Pathcraft continuous planning](https://Kind0419.github.io/Pathcraft/preview-continuous-en.png?v=2)
 
+### 3D
+
+Voxel worlds and continuous fields share a single orthographic view: no WebGL and no three.js, just sorted quads and polylines, which is why the offline single-file build is still one file.
+
+- **Voxel 3D**: exposed faces only (interior faces are culled while the geometry is built), three shades by orientation; 1 m voxels and A* over a 26-neighbourhood, the path being the polyline the search actually walked — no smoothing
+- **Continuous fields**: obstacles are analytic primitives (spheres, boxes, capsules, discs) rasterised on demand at the current resolution; resolution is a runtime parameter, so the distance field can be rebuilt at any time
+- **Altitude tint**: the route runs from pale sage (low) to amber (high). An orthographic view has no perspective, so without colour a climb and a stroll look identical
+- **Occlusion**: the route and the walls share one depth list, so a column genuinely hides the segment behind it; a very faint x-ray pass keeps the route from appearing to stop dead in front of the goal
+- **Placing endpoints**: click the floor to place start or goal (unprojected onto the ground plane), matching the 2D promise of snapping to a legal cell
+- **Sampling in 3D**: RRT and RRT* work here too — the tree lives in continuous coordinates, and the lattice is only a collision oracle
+
+![Pathcraft 3D voxel planning](https://Kind0419.github.io/Pathcraft/preview-3d.png?v=1)
+
 ---
 
 ## Algorithm scope
+
+Available in 3D: A*, Dijkstra, greedy, BFS, DFS, weighted A* (over a 26-neighbourhood lattice), plus RRT and RRT* (continuous tree with lattice collision checks). JPS, IDA*, D* Lite, bidirectional A*, Beam and the metaheuristics are 2D implementations; in a 3D scene they are marked "not applicable" rather than quietly swapped for A*.
 
 ### Grid graph search
 

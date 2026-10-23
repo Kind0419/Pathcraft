@@ -27,6 +27,17 @@ export interface SearchOptions {
   goalTolerance?: number
   /** Node expansion cap; stops and returns the best partial path. */
   budget?: number
+  /** Record the expansion order so the UI can replay the search. */
+  trace?: boolean
+}
+
+/** One expansion, in the order the search visited it. */
+export interface SearchStep {
+  index: number
+  g: number
+  h: number
+  f: number
+  open: number
 }
 
 export interface SearchOutcome {
@@ -39,6 +50,8 @@ export interface SearchOutcome {
   openAtEnd: number
   /** Sum of the edge costs actually walked. */
   cost: number
+  /** Expansion order, present only when `trace` was requested. */
+  trace?: SearchStep[]
 }
 
 interface Node {
@@ -99,6 +112,7 @@ export function searchLattice(lattice: Lattice, options: SearchOptions): SearchO
   let expanded = 0
   let endKey = -1
   let openAtEnd = 0
+  const steps: SearchStep[] | undefined = options.trace ? [] : undefined
 
   while (heap.size > 0) {
     const current = heap.pop() as Node
@@ -106,6 +120,15 @@ export function searchLattice(lattice: Lattice, options: SearchOptions): SearchO
     if (current.g > gScore[current.key] + 1e-9) continue
     closed[current.key] = 1
     expanded += 1
+    if (steps) {
+      steps.push({
+        index: current.index,
+        g: current.g,
+        h: current.h,
+        f: current.priority,
+        open: heap.size,
+      })
+    }
 
     lattice.cellOf(current.index, cell)
     const gap = Math.hypot(
@@ -153,7 +176,7 @@ export function searchLattice(lattice: Lattice, options: SearchOptions): SearchO
   }
 
   if (endKey < 0) {
-    return { found: false, nodes: [], path: [], expanded, openAtEnd, cost: 0 }
+    return { found: false, nodes: [], path: [], expanded, openAtEnd, cost: 0, trace: steps }
   }
 
   const nodes: number[] = []
@@ -172,6 +195,7 @@ export function searchLattice(lattice: Lattice, options: SearchOptions): SearchO
     expanded,
     openAtEnd,
     cost: gScore[endKey],
+    trace: steps,
   }
 }
 

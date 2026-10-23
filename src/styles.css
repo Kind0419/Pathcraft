@@ -3658,3 +3658,84 @@ body.is-dragging-card * {
     transition-duration: 0.001ms !important;
   }
 }
+/* ------------------------------------------------------------ scenario groups */
+
+/* Grouping in the picker: 2D grids, voxel worlds and continuous fields are three
+   different kinds of thing, so they are separated by a hairline instead of being
+   one flat row of eight equal-looking buttons. */
+.scenario-group {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.scenario-group + .scenario-group {
+  margin-left: 7px;
+  padding-left: 7px;
+  border-left: 1px solid var(--line);
+}
+
+/* ---------------------------------------------------------------- scene 3d */
+
+.scene3d {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.scene3d-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  cursor: grab;
+  touch-action: none;
+}
+
+.scene3d-canvas:active {
+  cursor: grabbing;
+}
+
+.scene3d-canvas.is-picking {
+  cursor: crosshair;
+}
+
+.scene3d-hint {
+  position: absolute;
+  left: 14px;
+  bottom: 12px;
+  display: flex;
+  gap: 12px;
+  color: var(--faint);
+  font-family: var(--mono);
+  font-size: 9.5px;
+  letter-spacing: 0.02em;
+  pointer-events: none;
+}
+
+.scene3d-zoom {
+  position: absolute;
+  right: 12px;
+  bottom: 10px;
+  display: flex;
+  gap: 3px;
+}
+
+.scene3d-zoom button {
+  width: 24px;
+  height: 24px;
+  color: var(--muted);
+  background: rgba(253, 252, 248, 0.92);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  transition: color 120ms ease, border-color 120ms ease;
+}
+
+.scene3d-zoom button:hover {
+  color: var(--pine);
+  border-color: var(--line-strong);
+}

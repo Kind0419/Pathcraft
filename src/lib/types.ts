@@ -51,6 +51,8 @@ export interface GridMap {
 export interface SearchEvent {
   x: number
   y: number
+  /** Present for voxel / field-3D runs; the 2D canvas ignores it. */
+  z?: number
   g: number
   h: number
   f: number
@@ -127,6 +129,16 @@ export interface PlanResult {
   field?: PlanField
   /** Honest note about settings this algorithm ignores, surfaced in the UI. */
   note?: string
+  /**
+   * Why there is no answer, when the reason is not the geometry.
+   *
+   * `status: 'infeasible'` currently means "the search failed", and the UI
+   * diagnoses it as obstacles being too tight. Some failures have nothing to do
+   * with the scene — an algorithm that only exists in 2D cannot solve a 3D
+   * volume no matter how the cards are set. Tagging the cause lets the bottom
+   * bar say the true thing instead of sending the user to tune a radius.
+   */
+  reason?: 'unsupported'
   /** Discrete iteration counter (generations, ant rounds, IDA* passes…). */
   rounds?: number
   /** Where the answer came from; the UI shows this next to the solve time. */

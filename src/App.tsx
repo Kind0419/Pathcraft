@@ -12,6 +12,7 @@ import {
 } from 'react'
 import { Card } from './components/Card'
 import { CanvasView } from './components/CanvasView'
+import { Scene3D } from './components/Scene3D'
 import { FlowPanel } from './components/FlowPanel'
 import { Icon } from './components/Icon'
 import {
@@ -35,7 +36,17 @@ import {
   type Lang,
 } from './lib/i18n'
 import { getMap, mapFromCells, MAPS, MAP_LIMITS, clampMapSize, findFreeCell, resizeCells } from './lib/maps'
+import {
+  WORLD_GROUPS,
+  isWorldId,
+  resolveWorld,
+  snapEndpoint,
+  worldEndpoints,
+  worldMeta,
+  type WorldId,
+} from './lib/worlds'
 import { usePlan } from './hooks/usePlan'
+import { useWorldPlan } from './hooks/useWorldPlan'
 import { readSetting, writeSetting } from './lib/storage'
 import {
   FAMILIES,
@@ -43,8 +54,10 @@ import {
   cardApplies,
   optionalCards,
   solverFor,
+  supportsDim,
   type SolverSpec,
 } from './lib/solvers/registry'
+import type { Vec3 } from './lib/core/space'
 import type {
   CardId,
   CardsState,
@@ -103,13 +116,15 @@ function decodeCells(value: string, length: number): Uint8Array | null {
 }
 
 function readRecipeFromUrl(): {
-  mapId: MapId
+  worldId: WorldId
   cards: CardsState
   order: CardId[]
   start: Point
   goal: Point
   cells: Uint8Array | null
   size: { width: number; height: number } | null
+  start3: Vec3 | null
+  goal3: Vec3 | null
 } | null {
   if (typeof window === 'undefined') return null
   const hash = window.location.hash
@@ -121,13 +136,16 @@ function readRecipeFromUrl(): {
       o?: string[]
       s?: number[]
       g?: number[]
+      s3?: number[]
+      g3?: number[]
       x?: string
       w?: number
       h?: number
     }
-    const mapId = payload.m as MapId
-    if (!MAPS.some((map) => map.id === mapId)) return null
-    const baseMap = getMap(mapId)
+    const parsedId = typeof payload.m === 'string' && isWorldId(payload.m) ? payload.m : null
+    if (!parsedId) return null
+    const parsedWorld = resolveWorld(parsedId)
+    const baseMap = parsedWorld.kind === 'grid2d' ? parsedWorld.map : getMap(DEFAULT_MAP_ID)
     const cards = createDefaultCards()
     for (const def of CARD_DEFS) {
       const entry = payload.c?.[def.id]
@@ -183,6 +201,29 @@ function readRecipeFromUrl(): {
       }
       return { x, y }
     }
+    if (parsedWorld.kind !== 'grid2d') {
+      const ends = worldEndpoints(parsedWorld)
+      const read3 = (entry: number[] | undefined, fallback: Vec3): Vec3 => {
+        if (!Array.isArray(entry) || entry.length < 3) return fallback
+        const point = { x: Number(entry[0]), y: Number(entry[1]), z: Number(entry[2]) }
+        if (!Number.isFinite(point.x) || !Number.isFinite(point.y) || !Number.isFinite(point.z)) {
+          return fallback
+        }
+        return snapEndpoint(parsedWorld, point)
+      }
+      return {
+        worldId: parsedId,
+        cards,
+        order,
+        start: { ...baseMap.start },
+        goal: { ...baseMap.goal },
+        cells: null,
+        size: null,
+        start3: read3(payload.s3, ends.start),
+        goal3: read3(payload.g3, ends.goal),
+      }
+    }
+
     let start = readPoint(payload.s, baseMap.start)
     let goal = readPoint(payload.g, baseMap.goal)
     if (start.x === goal.x && start.y === goal.y) {
@@ -192,7 +233,17 @@ function readRecipeFromUrl(): {
         y: height - 3,
       })
     }
-    return { mapId, cards, order, start, goal, cells: decoded, size }
+    return {
+      worldId: parsedId,
+      cards,
+      order,
+      start,
+      goal,
+      cells: decoded,
+      size,
+      start3: null,
+      goal3: null,
+    }
   } catch {
     return null
   }
@@ -201,19 +252,25 @@ function readRecipeFromUrl(): {
 const INITIAL_RECIPE = readRecipeFromUrl()
 
 function serializeRecipe(
-  mapId: MapId,
+  worldId: WorldId,
   cards: CardsState,
   order: CardId[],
   start: Point,
   goal: Point,
+  start3: Vec3 | null,
+  goal3: Vec3 | null,
   cells: Uint8Array | null,
   size: { width: number; height: number } | null,
 ): string {
   const compact = {
-    m: mapId,
+    m: worldId,
     o: order,
     s: [start.x, start.y],
     g: [goal.x, goal.y],
+    // 3D worlds carry their endpoints in world units; the 2D pair above stays
+    // as the fallback so a downgraded link still opens something sensible.
+    s3: start3 ? [start3.x, start3.y, start3.z] : undefined,
+    g3: goal3 ? [goal3.x, goal3.y, goal3.z] : undefined,
     x: cells ? encodeCells(cells) : undefined,
     w: cells ? size?.width : undefined,
     h: cells ? size?.height : undefined,
@@ -334,6 +391,17 @@ function diagnoseInfeasible(
   result: PlanResult,
   lang: Lang = 'zh',
 ): { title: string; hint: string; card: CardId | null } {
+  if (result.reason === 'unsupported') {
+    return {
+      title: tr(lang, '该算法没有三维实现'),
+      hint:
+        lang === 'en'
+          ? result.note ??
+            'This algorithm only exists for 2D. Pick A*, Dijkstra, greedy, BFS, DFS, weighted A* or RRT* instead.'
+          : result.note ?? '这个算法只有 2D 实现。请改选 A*、Dijkstra、贪心、BFS、DFS、加权 A* 或 RRT*。',
+      card: null,
+    }
+  }
   if (result.continuous) {
     return {
       title: tr(lang, '采样未连通'),
@@ -465,8 +533,10 @@ function MetricsPanel({
   onQuickToggle: (id: CardId) => void
 }) {
   const lang = useLang()
-  const lengthM = result.pathLength * map.cellSize
-  const clearanceM = result.minClearance * map.cellSize
+  // A 3D/field result already reports metres; a grid result reports cells.
+  const scale = result.path3 ? 1 : map.cellSize
+  const lengthM = result.pathLength * scale
+  const clearanceM = result.minClearance * scale
   const total = result.totalCost
   const costItems: Array<{ id: string; label: string; value: number; color: string; card?: CardId }> = [
     { id: 'length', label: tr(lang, '长度'), value: result.cost.length, color: '#1f4e5f' },
@@ -1131,13 +1201,14 @@ function RunPanel({
 }
 
 function MetricsStrip({
-  map,
+  scale,
   result,
   pending,
   progress,
   onOpen,
 }: {
-  map: GridMap
+  /** Metres per unit of `pathLength` / `minClearance`. */
+  scale: number
   result: PlanResult
   pending: boolean
   progress: number
@@ -1145,8 +1216,8 @@ function MetricsStrip({
 }) {
   const lang = useLang()
   const solved = result.status === 'success'
-  const lengthM = result.pathLength * map.cellSize
-  const clearanceM = result.minClearance * map.cellSize
+  const lengthM = result.pathLength * scale
+  const clearanceM = result.minClearance * scale
   return (
     <div className={`metrics-strip ${pending ? 'is-pending' : ''}`}>
       <div className="strip-metric is-primary">
@@ -1340,7 +1411,20 @@ function Timeline({
 }
 
 export default function App() {
-  const [mapId, setMapId] = useState<MapId>(INITIAL_RECIPE?.mapId ?? DEFAULT_MAP_ID)
+  const [worldId, setWorldId] = useState<WorldId>(INITIAL_RECIPE?.worldId ?? DEFAULT_MAP_ID)
+  const world = useMemo(() => resolveWorld(worldId), [worldId])
+  const is3D = world.kind !== 'grid2d'
+  const worldSize =
+    world.kind === 'voxel3d'
+      ? `${world.scene.volume.width}×${world.scene.volume.height}×${world.scene.volume.depth}`
+      : world.kind === 'field2d'
+        ? `${(world.scene.space.bounds.max.x).toFixed(0)}×${(world.scene.space.bounds.max.y).toFixed(0)} m`
+        : world.kind === 'field3d'
+          ? `${(world.scene.space.bounds.max.x).toFixed(0)}×${(world.scene.space.bounds.max.y).toFixed(0)}×${(world.scene.space.bounds.max.z).toFixed(0)} m`
+          : ''
+  // The 2D pipeline still needs a GridMap; in a 3D world it is simply not used
+  // for solving, but several panels (history, metrics) want a valid object.
+  const mapId: MapId = world.kind === 'grid2d' ? world.map.id : DEFAULT_MAP_ID
   const [cards, setCards] = useState<CardsState>(
     () => INITIAL_RECIPE?.cards ?? createDefaultCards(),
   )
@@ -1432,6 +1516,14 @@ export default function App() {
     () => INITIAL_RECIPE?.goal ?? { ...map.goal },
   )
   const [editMode, setEditMode] = useState<'none' | 'start' | 'goal'>('none')
+  // Endpoints for 3D / field worlds live in world units, independent of the 2D
+  // start/goal cells. Switching worlds resets them to that scene's defaults.
+  const [start3, setStart3] = useState<Vec3>(
+    () => INITIAL_RECIPE?.start3 ?? worldEndpoints(world).start,
+  )
+  const [goal3, setGoal3] = useState<Vec3>(
+    () => INITIAL_RECIPE?.goal3 ?? worldEndpoints(world).goal,
+  )
   const activeMap = useMemo(
     () => ({ ...map, start, goal }),
     [map, start, goal],
@@ -1446,7 +1538,24 @@ export default function App() {
     }
     return next
   }, [cards, recipeOrder])
-  const planState = usePlan(activeMap, effectiveCards, recipeOrder)
+  const endpoints = useMemo(
+    () =>
+      is3D
+        ? { start: start3, goal: goal3 }
+        : {
+            start: { x: start.x, y: start.y, z: 0 },
+            goal: { x: goal.x, y: goal.y, z: 0 },
+          },
+    [is3D, start3, goal3, start, goal],
+  )
+  const planState = useWorldPlan(
+    world,
+    activeMap,
+    effectiveCards,
+    recipeOrder,
+    endpoints,
+    Math.round(cards.strategy.value),
+  )
   const result = planState.result
   const previousRunRef = useRef<{ result: PlanResult; mapId: MapId } | null>(null)
 
@@ -1547,11 +1656,13 @@ export default function App() {
 
   useEffect(() => {
     const hash = `#r=${serializeRecipe(
-      mapId,
+      worldId,
       cards,
       recipeOrder,
       start,
       goal,
+      is3D ? start3 : null,
+      is3D ? goal3 : null,
       editedCells,
       customSize,
     )}`
@@ -1562,7 +1673,7 @@ export default function App() {
     } catch {
       // The share link still works when copied from the export menu.
     }
-  }, [mapId, cards, recipeOrder, start, goal, editedCells, customSize])
+  }, [worldId, is3D, start3, goal3, cards, recipeOrder, start, goal, editedCells, customSize])
 
   useEffect(() => {
     writeSetting('pathcraft:lang:v1', lang)
@@ -1902,9 +2013,32 @@ export default function App() {
     setEditMode('none')
   }
 
-  function handleMapChange(nextMapId: MapId) {
-    const nextMap = getMap(nextMapId)
-    setMapId(nextMapId)
+  function handleWorldChange(nextId: WorldId) {
+    setWorldId(nextId)
+    const nextWorld = resolveWorld(nextId)
+    if (nextWorld.kind !== 'grid2d') {
+      const ends = worldEndpoints(nextWorld)
+      setStart3(ends.start)
+      setGoal3(ends.goal)
+      setEditedCells(null)
+      setCustomSize(null)
+      setEditingMap(false)
+      setEditMode('none')
+      setGhostPath([])
+      setGhostContinuous(false)
+      setPreviousMetrics(null)
+      setPlayhead(0)
+      setReplayNonce((value) => value + 1)
+      // Algorithms without a 3D implementation would otherwise render an empty
+      // canvas with an "unsupported" note; land on A* instead.
+      const dim = nextWorld.kind === 'field3d' || nextWorld.kind === 'voxel3d' ? 3 : 2
+      if (!supportsDim(solverFor(cards), dim) || Math.round(cards.strategy.value) > 5) {
+        setCards((prev) => ({ ...prev, strategy: { ...prev.strategy, value: 0 } }))
+      }
+      return
+    }
+    const nextMap = nextWorld.map
+    setWorldId(nextWorld.map.id)
     setEditedCells(null)
     setCustomSize(null)
     setEditingMap(false)
@@ -1921,7 +2055,9 @@ export default function App() {
   function handleReset() {
     const resetMap = getMap(DEFAULT_MAP_ID)
     setCards(createDefaultCards())
-    setMapId(DEFAULT_MAP_ID)
+    setWorldId(DEFAULT_MAP_ID)
+    setStart3(worldEndpoints(resolveWorld(DEFAULT_MAP_ID)).start)
+    setGoal3(worldEndpoints(resolveWorld(DEFAULT_MAP_ID)).goal)
     setEditedCells(null)
     setCustomSize(null)
     setEditingMap(false)
@@ -2045,15 +2181,23 @@ export default function App() {
 
         <div className="topbar-center">
           <div className="scenario-switch" role="group" aria-label={tr(lang, '选择场景')}>
-            {MAPS.map((item) => (
-              <button
-                key={item.id}
-                type="button"
-                className={mapId === item.id ? 'is-active' : ''}
-                onClick={() => handleMapChange(item.id)}
-              >
-                {tr(lang, item.name)}
-              </button>
+            {WORLD_GROUPS.map((group) => (
+              <div className="scenario-group" key={group.key}>
+                {group.ids.map((id) => {
+                  const meta = worldMeta(id)
+                  return (
+                    <button
+                      key={id}
+                      type="button"
+                      className={worldId === id ? 'is-active' : ''}
+                      title={lang === 'en' ? meta.blurbEn : meta.blurb}
+                      onClick={() => handleWorldChange(id)}
+                    >
+                      {lang === 'en' ? meta.nameEn : meta.name}
+                    </button>
+                  )
+                })}
+              </div>
             ))}
           </div>
         </div>
@@ -2069,7 +2213,7 @@ export default function App() {
           </span>
           <span className="topbar-divider" />
           <span className="topbar-grid">
-            {map.width}×{map.height} · {map.cellSize.toFixed(1)} m
+            {is3D ? `${worldSize} · ${tr(lang, '三维')}` : `${map.width}×${map.height} · ${map.cellSize.toFixed(1)} m`}
           </span>
         </div>
 
@@ -2252,17 +2396,19 @@ export default function App() {
                 <span>{tr(lang, '路径')}</span>
                 <em>{showPath ? tr(lang, '开') : tr(lang, '关')}</em>
               </button>
-              <button
-                type="button"
-                className={`layer-btn ${showGhost ? 'is-on' : ''}`}
-                aria-pressed={showGhost}
-                title={showGhost ? tr(lang, '旧路径：显示中，点击隐藏') : tr(lang, '旧路径：已隐藏，点击显示上一版结果')}
-                onClick={() => setShowGhost((value) => !value)}
-              >
-                <Icon name={showGhost ? 'eye' : 'eyeOff'} size={12} />
-                <span>{tr(lang, '旧路径')}</span>
-                <em>{showGhost ? tr(lang, '开') : tr(lang, '关')}</em>
-              </button>
+              {!is3D ? (
+                <button
+                  type="button"
+                  className={`layer-btn ${showGhost ? 'is-on' : ''}`}
+                  aria-pressed={showGhost}
+                  title={showGhost ? tr(lang, '旧路径：显示中，点击隐藏') : tr(lang, '旧路径：已隐藏，点击显示上一版结果')}
+                  onClick={() => setShowGhost((value) => !value)}
+                >
+                  <Icon name={showGhost ? 'eye' : 'eyeOff'} size={12} />
+                  <span>{tr(lang, '旧路径')}</span>
+                  <em>{showGhost ? tr(lang, '开') : tr(lang, '关')}</em>
+                </button>
+              ) : null}
             </div>
             <div className="edit-points" role="group" aria-label={tr(lang, '编辑起点终点')}>
               <button
@@ -2288,19 +2434,21 @@ export default function App() {
                 {tr(lang, '终点')}
               </button>
             </div>
-            <button
-              type="button"
-              className={`map-edit-toggle ${editingMap ? 'is-active' : ''}`}
-              aria-pressed={editingMap}
-              title={editingMap ? tr(lang, '退出地图编辑') : tr(lang, '编辑 2D 栅格地图')}
-              onClick={() => {
-                setEditingMap((value) => !value)
-                setEditMode('none')
-              }}
-            >
-              <Icon name="edit" size={12} />
-              {tr(lang, '编辑')}
-            </button>
+            {!is3D ? (
+              <button
+                type="button"
+                className={`map-edit-toggle ${editingMap ? 'is-active' : ''}`}
+                aria-pressed={editingMap}
+                title={editingMap ? tr(lang, '退出地图编辑') : tr(lang, '编辑 2D 栅格地图')}
+                onClick={() => {
+                  setEditingMap((value) => !value)
+                  setEditMode('none')
+                }}
+              >
+                <Icon name="edit" size={12} />
+                {tr(lang, '编辑')}
+              </button>
+            ) : null}
             <button
               type="button"
               className={`map-edit-toggle focus-toggle ${
@@ -2320,14 +2468,21 @@ export default function App() {
               {leftCollapsed && rightCollapsed ? tr(lang, '退出专注') : tr(lang, '专注')}
             </button>
             <span className="canvas-toolbar-hint">
-              {editingMap
-                ? tr(lang, '编辑模式 · 在画布上拖动绘制，2D 栅格')
-                : editMode === 'start'
-                  ? tr(lang, '点击地图放置起点，或直接拖动 S')
+              {is3D
+                ? editMode === 'start'
+                  ? tr(lang, '在地面点击放置起点')
                   : editMode === 'goal'
-                    ? tr(lang, '点击地图放置终点，或直接拖动 G')
-                    : ''}
+                    ? tr(lang, '在地面点击放置终点')
+                    : tr(lang, '拖动旋转视角，滚轮缩放')
+                : editingMap
+                  ? tr(lang, '编辑模式 · 在画布上拖动绘制，2D 栅格')
+                  : editMode === 'start'
+                    ? tr(lang, '点击地图放置起点，或直接拖动 S')
+                    : editMode === 'goal'
+                      ? tr(lang, '点击地图放置终点，或直接拖动 G')
+                      : ''}
             </span>
+            {!is3D ? (
             <div className="zoom-control" role="group" aria-label={tr(lang, '画布缩放')}>
               <button
                 type="button"
@@ -2352,7 +2507,10 @@ export default function App() {
                 +
               </button>
             </div>
-            <span className="canvas-toolbar-meta">{map.cellSize.toFixed(1)} m / {tr(lang, '格')}</span>
+            ) : null}
+            <span className="canvas-toolbar-meta">
+              {is3D ? `1.0 m / ${tr(lang, '体素')}` : `${map.cellSize.toFixed(1)} m / ${tr(lang, '格')}`}
+            </span>
           </div>
 
           {editingMap ? (
@@ -2459,31 +2617,50 @@ export default function App() {
               result.status === 'infeasible' ? 'is-infeasible' : ''
             }`}
           >
-            <CanvasView
-              map={activeMap}
-              cards={effectiveCards}
-              result={result}
-              playhead={playhead}
-              ghostPath={ghostPath}
+            {world.kind === 'grid2d' ? (
+              <CanvasView
+                map={activeMap}
+                cards={effectiveCards}
+                result={result}
+                playhead={playhead}
+                ghostPath={ghostPath}
                 ghostContinuous={ghostContinuous}
-              hoverCard={hoverCard}
-              showExpanded={showExpanded}
-              showTrail={planState.solver.family !== 'meta'}
-              showPath={showPath}
-              showGhost={showGhost}
-              editMode={editMode}
-              onStartChange={setStart}
-              onGoalChange={setGoal}
-              onMarkerDrag={(active) => (active ? beginGesture() : endGesture())}
-              onPlacePoint={() => setEditMode('none')}
-              onInvalidPoint={setToast}
-              mapEditMode={editingMap ? brushMode : null}
-              brushSize={brushSize}
-              onPaintCell={paintMapCell}
-              zoom={zoom}
-              onZoom={setZoom}
-            />
-            {showGhost && ghostPath.length > 1 ? (
+                hoverCard={hoverCard}
+                showExpanded={showExpanded}
+                showTrail={planState.solver.family !== 'meta'}
+                showPath={showPath}
+                showGhost={showGhost}
+                editMode={editMode}
+                onStartChange={setStart}
+                onGoalChange={setGoal}
+                onMarkerDrag={(active) => (active ? beginGesture() : endGesture())}
+                onPlacePoint={() => setEditMode('none')}
+                onInvalidPoint={setToast}
+                mapEditMode={editingMap ? brushMode : null}
+                brushSize={brushSize}
+                onPaintCell={paintMapCell}
+                zoom={zoom}
+                onZoom={setZoom}
+              />
+            ) : (
+              <Scene3D
+                world={world}
+                result={result}
+                start={start3}
+                goal={goal3}
+                playhead={playhead}
+                showExpanded={showExpanded}
+                showPath={showPath}
+                pickMode={editMode}
+                onPick={(which, point) => {
+                  const snapped = snapEndpoint(world, point)
+                  if (which === 'start') setStart3(snapped)
+                  else setGoal3(snapped)
+                  setEditMode('none')
+                }}
+              />
+            )}
+            {!is3D && showGhost && ghostPath.length > 1 ? (
               <div className="canvas-legend">
                 <span className="legend-dash" />
                 {tr(lang, '上一版路径')}
@@ -2514,7 +2691,7 @@ export default function App() {
             </div>
           ) : (
             <MetricsStrip
-              map={activeMap}
+              scale={is3D ? 1 : activeMap.cellSize}
               result={result}
               pending={planState.pending}
               progress={planState.progress}

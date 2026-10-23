@@ -1,6 +1,6 @@
 {
   "name": "pathcraft",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "Composable 2D/3D path-planning workbench with live execution traces and 17 algorithms, from A* and JPS to RRT*, ant colony and a worker/server solver runtime.",
   "license": "MIT",
   "type": "module",

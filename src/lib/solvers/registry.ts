@@ -53,6 +53,31 @@ export interface SolverSpec {
   blurbEn: string
 }
 
+/**
+ * Which solvers can run outside a 2D cell grid.
+ *
+ * Only the six plain graph engines (they go through the dimension-agnostic
+ * `searchLattice`) and the two sampling planners. Everything else is a 2D
+ * implementation on purpose: JPS's pruning, IDA*'s move ordering, D* Lite's
+ * incremental repair and the metaheuristics were all built and published against
+ * the 2D engine. Claiming they work in 3D would be a lie the UI could not back
+ * up, so a 3D world disables them instead of silently substituting A*.
+ */
+const SPATIAL_SOLVERS: ReadonlySet<SolverId> = new Set<SolverId>([
+  'astar',
+  'dijkstra',
+  'greedy',
+  'bfs',
+  'dfs',
+  'weighted',
+  'rrt',
+  'rrtstar',
+])
+
+export function supportsDim(spec: SolverSpec, dim: 2 | 3): boolean {
+  return dim === 2 || SPATIAL_SOLVERS.has(spec.id)
+}
+
 export const SOLVERS: SolverSpec[] = [
   {
     id: 'astar',
