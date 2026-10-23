@@ -3683,6 +3683,20 @@ body.is-dragging-card * {
   min-width: 0;
   min-height: 0;
   overflow: hidden;
+  /* The canvas paints its own background; this only prevents a white flash
+     between a resize and the next frame. */
+  background: #f7f4ea;
+}
+
+/* A hairline edge. Without it the canvas gradient runs into the page's own
+   paper colour and the scene appears to float in the document rather than sit
+   in a viewport. */
+.scene3d::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  box-shadow: inset 0 0 0 1px rgba(118, 124, 112, 0.1);
 }
 
 .scene3d-canvas {
@@ -3709,12 +3723,29 @@ body.is-dragging-card * {
   left: 14px;
   bottom: 12px;
   display: flex;
-  gap: 12px;
+  align-items: center;
+  gap: 0;
+  padding: 5px 2px;
   color: var(--faint);
   font-family: var(--mono);
   font-size: 9.5px;
   letter-spacing: 0.02em;
   pointer-events: none;
+  background: rgba(249, 247, 240, 0.72);
+  border: 1px solid rgba(118, 124, 112, 0.13);
+  border-radius: 999px;
+  backdrop-filter: blur(7px);
+  -webkit-backdrop-filter: blur(7px);
+}
+
+/* A middot between hints instead of a gap: one capsule reads as a legend, three
+   floating sentences read as debug text. */
+.scene3d-hint span {
+  padding: 0 9px;
+}
+
+.scene3d-hint span + span {
+  border-left: 1px solid rgba(118, 124, 112, 0.16);
 }
 
 .scene3d-zoom {
@@ -3722,23 +3753,35 @@ body.is-dragging-card * {
   right: 12px;
   bottom: 10px;
   display: flex;
-  gap: 3px;
+  gap: 4px;
 }
 
 .scene3d-zoom button {
-  width: 24px;
-  height: 24px;
+  width: 26px;
+  height: 26px;
   color: var(--muted);
-  background: rgba(253, 252, 248, 0.92);
-  border: 1px solid var(--line);
-  border-radius: 5px;
+  background: rgba(252, 251, 247, 0.84);
+  border: 1px solid rgba(118, 124, 112, 0.2);
+  border-radius: 7px;
+  box-shadow: 0 1px 2px rgba(40, 46, 39, 0.05);
   font-size: 12px;
   line-height: 1;
   cursor: pointer;
-  transition: color 120ms ease, border-color 120ms ease;
+  backdrop-filter: blur(7px);
+  -webkit-backdrop-filter: blur(7px);
+  transition: color 140ms ease, border-color 140ms ease, background 140ms ease,
+    transform 140ms ease, box-shadow 140ms ease;
 }
 
 .scene3d-zoom button:hover {
   color: var(--pine);
-  border-color: var(--line-strong);
+  background: rgba(255, 255, 253, 0.96);
+  border-color: rgba(118, 124, 112, 0.36);
+  box-shadow: 0 3px 8px rgba(40, 46, 39, 0.09);
+  transform: translateY(-1px);
+}
+
+.scene3d-zoom button:active {
+  transform: translateY(0) scale(0.95);
+  box-shadow: 0 1px 1px rgba(40, 46, 39, 0.06);
 }

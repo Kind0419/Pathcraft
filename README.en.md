@@ -71,11 +71,15 @@ RRT / RRT* / PRM / Visibility graph turn search points into continuous samples a
 
 Voxel worlds and continuous fields share a single orthographic view: no WebGL and no three.js, just sorted quads and polylines, which is why the offline single-file build is still one file.
 
-- **Voxel 3D**: exposed faces only (interior faces are culled while the geometry is built), three shades by orientation; 1 m voxels and A* over a 26-neighbourhood, the path being the polyline the search actually walked — no smoothing
+- **Voxel 3D**: exposed faces only, merged into one quad per run — a 30 x 21 floor becomes twenty-odd quads instead of six hundred. That is not only a saving: drawn cell by cell, the stroke that hides each seam adds up to a fine grid over the whole plate and the floor reads as tiling
+- **One material, four tones**: floor, wall tops and two side orientations, all derived from a single hex. Four hand-picked colours turn the volume into a diagram with a legend; one material under one light reads as a solid. Wall tops also lift slightly with altitude, so two floor slabs separate without relying on position alone
+- **Contact shadows**: every occupied column, and every floating sphere or slab, drops a soft shadow on the ground. Without one, columns and balls are stickers
 - **Continuous fields**: obstacles are analytic primitives (spheres, boxes, capsules, discs) rasterised on demand at the current resolution; resolution is a runtime parameter, so the distance field can be rebuilt at any time
-- **Altitude tint**: the route runs from pale sage (low) to amber (high). An orthographic view has no perspective, so without colour a climb and a stroll look identical
+- **Altitude tint**: the route runs from pale sage (low) to amber (high). An orthographic view has no perspective, so without colour a climb and a stroll look identical. A ground projection of the route runs underneath it, so a climb visibly separates the line from its own shadow
 - **Occlusion**: the route and the walls share one depth list, so a column genuinely hides the segment behind it; a very faint x-ray pass keeps the route from appearing to stop dead in front of the goal
 - **Moving endpoints**: drag S or G directly, exactly as in 2D; or arm start/goal from the toolbar and click the scene. Picking walks the view ray, so a point can land on an upper floor rather than only the ground layer, and snaps to the nearest legal cell on release
+- **Feel**: orbiting coasts to a stop after release, the wheel eases instead of stepping, and the reset tween takes the shortest way round (after a few spins it does not unwind them backwards)
+- **Frame loop**: the camera lives in a ref and repaints from requestAnimationFrame, so a drag triggers no React render at all — which is what makes it track the hand
 - **Sampling in 3D**: RRT and RRT* work here too — the tree lives in continuous coordinates, and the lattice is only a collision oracle
 
 ![Pathcraft 3D voxel planning](https://Kind0419.github.io/Pathcraft/preview-3d.png?v=1)

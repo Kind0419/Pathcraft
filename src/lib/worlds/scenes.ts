@@ -250,14 +250,15 @@ function floatingGrove(): FieldSpace {
     bounds: { min: { x: 0, y: 0, z: 0 }, max: { x: 30, y: 22, z: 12 } },
     primitives: [
       { kind: 'box3', min: { x: -1, y: -1, z: -1 }, max: { x: 31, y: 0, z: 13 } },
-      // Perimeter walls stop at z = 4.5. Full-height walls are honest physics and
+      // Perimeter walls stop at z = 3. Full-height walls are honest physics and
       // a useless picture: from any isometric camera the volume becomes a closed
-      // box and none of the floating bodies inside are visible. The planner never
-      // leaves the bounds anyway, so a low rim encloses it just as effectively.
-      { kind: 'box3', min: { x: -1, y: -1, z: -1 }, max: { x: 0, y: 23, z: 4.5 } },
-      { kind: 'box3', min: { x: 30, y: -1, z: -1 }, max: { x: 31, y: 23, z: 4.5 } },
-      { kind: 'box3', min: { x: -1, y: -1, z: -1 }, max: { x: 31, y: 0, z: 4.5 } },
-      { kind: 'box3', min: { x: -1, y: 21, z: -1 }, max: { x: 31, y: 22, z: 4.5 } },
+      // box and the floating bodies inside disappear behind its rim. The planner
+      // never leaves the bounds anyway, so a low rim encloses it just as well —
+      // and three metres still reads as an enclosure rather than a skirting.
+      { kind: 'box3', min: { x: -1, y: -1, z: -1 }, max: { x: 0, y: 23, z: 3 } },
+      { kind: 'box3', min: { x: 30, y: -1, z: -1 }, max: { x: 31, y: 23, z: 3 } },
+      { kind: 'box3', min: { x: -1, y: -1, z: -1 }, max: { x: 31, y: 0, z: 3 } },
+      { kind: 'box3', min: { x: -1, y: 21, z: -1 }, max: { x: 31, y: 22, z: 3 } },
       // No ceiling, and no long beams either. Both were tried: a lid turns the
       // volume into an opaque block, and two full-span beams project into two
       // fat diagonals that cover exactly the space the route climbs through.
