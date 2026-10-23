@@ -75,7 +75,7 @@ Voxel worlds and continuous fields share a single orthographic view: no WebGL an
 - **Continuous fields**: obstacles are analytic primitives (spheres, boxes, capsules, discs) rasterised on demand at the current resolution; resolution is a runtime parameter, so the distance field can be rebuilt at any time
 - **Altitude tint**: the route runs from pale sage (low) to amber (high). An orthographic view has no perspective, so without colour a climb and a stroll look identical
 - **Occlusion**: the route and the walls share one depth list, so a column genuinely hides the segment behind it; a very faint x-ray pass keeps the route from appearing to stop dead in front of the goal
-- **Placing endpoints**: click the floor to place start or goal (unprojected onto the ground plane), matching the 2D promise of snapping to a legal cell
+- **Moving endpoints**: drag S or G directly, exactly as in 2D; or arm start/goal from the toolbar and click the scene. Picking walks the view ray, so a point can land on an upper floor rather than only the ground layer, and snaps to the nearest legal cell on release
 - **Sampling in 3D**: RRT and RRT* work here too — the tree lives in continuous coordinates, and the lattice is only a collision oracle
 
 ![Pathcraft 3D voxel planning](https://Kind0419.github.io/Pathcraft/preview-3d.png?v=1)

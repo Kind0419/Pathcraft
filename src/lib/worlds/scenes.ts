@@ -250,16 +250,22 @@ function floatingGrove(): FieldSpace {
     bounds: { min: { x: 0, y: 0, z: 0 }, max: { x: 30, y: 22, z: 12 } },
     primitives: [
       { kind: 'box3', min: { x: -1, y: -1, z: -1 }, max: { x: 31, y: 0, z: 13 } },
-      { kind: 'box3', min: { x: -1, y: -1, z: -1 }, max: { x: 0, y: 23, z: 13 } },
-      { kind: 'box3', min: { x: 30, y: -1, z: -1 }, max: { x: 31, y: 23, z: 13 } },
-      { kind: 'box3', min: { x: -1, y: -1, z: -1 }, max: { x: 31, y: 0, z: 13 } },
-      { kind: 'box3', min: { x: -1, y: 21, z: -1 }, max: { x: 31, y: 22, z: 13 } },
-      // Overhead: beams, not a lid. A full ceiling primitive is correct physics
-      // and fatal presentation — the volume renders as one opaque block and the
-      // whole scene disappears under it. Two beams read as a roof structure while
-      // leaving the middle of the volume visible from an isometric camera.
-      { kind: 'box3', min: { x: -1, y: 5, z: 11.4 }, max: { x: 31, y: 7, z: 12.4 } },
-      { kind: 'box3', min: { x: -1, y: 14, z: 11.4 }, max: { x: 31, y: 16, z: 12.4 } },
+      // Perimeter walls stop at z = 4.5. Full-height walls are honest physics and
+      // a useless picture: from any isometric camera the volume becomes a closed
+      // box and none of the floating bodies inside are visible. The planner never
+      // leaves the bounds anyway, so a low rim encloses it just as effectively.
+      { kind: 'box3', min: { x: -1, y: -1, z: -1 }, max: { x: 0, y: 23, z: 4.5 } },
+      { kind: 'box3', min: { x: 30, y: -1, z: -1 }, max: { x: 31, y: 23, z: 4.5 } },
+      { kind: 'box3', min: { x: -1, y: -1, z: -1 }, max: { x: 31, y: 0, z: 4.5 } },
+      { kind: 'box3', min: { x: -1, y: 21, z: -1 }, max: { x: 31, y: 22, z: 4.5 } },
+      // No ceiling, and no long beams either. Both were tried: a lid turns the
+      // volume into an opaque block, and two full-span beams project into two
+      // fat diagonals that cover exactly the space the route climbs through.
+      // Thin columns carry the same "this is a volume with height" message
+      // without occupying the picture.
+      { kind: 'capsule3', a: { x: 4, y: 4, z: 0 }, b: { x: 4, y: 4, z: 11.5 }, r: 0.42 },
+      { kind: 'capsule3', a: { x: 26, y: 18, z: 0 }, b: { x: 26, y: 18, z: 11.5 }, r: 0.42 },
+      { kind: 'capsule3', a: { x: 11, y: 19, z: 0 }, b: { x: 11, y: 19, z: 8.5 }, r: 0.38 },
       sphere(9, 6, 5, 2.6),
       sphere(20, 16, 7, 3.1),
       sphere(15, 11, 2.4, 1.8),

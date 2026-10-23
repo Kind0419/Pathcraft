@@ -167,9 +167,11 @@ export function snapEndpoint(world: World, point: Vec3, pad = 0.9): Vec3 {
       if (v.cells[index] === 1) return false
       return v.clearance[index] >= pad / spacing
     }
-    const cx = Math.round(point.x / spacing)
-    const cy = Math.round(point.y / spacing)
-    const cz = Math.max(1, Math.min(v.depth - 2, Math.round(point.z / spacing)))
+    // floor, not round: cell (x, y) covers [x·spacing, (x+1)·spacing), so a point
+    // at 0.9 belongs to cell 0. Rounding put picks one cell off near every edge.
+    const cx = Math.floor(point.x / spacing)
+    const cy = Math.floor(point.y / spacing)
+    const cz = Math.max(1, Math.min(v.depth - 2, Math.floor(point.z / spacing)))
     for (let radius = 0; radius <= 14; radius += 1) {
       for (let dz = -radius; dz <= radius; dz += 1) {
         for (let dy = -radius; dy <= radius; dy += 1) {

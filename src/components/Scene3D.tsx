@@ -42,14 +42,25 @@ interface Face {
   nx: number
   ny: number
   nz: number
-  /** Shade index: 0 top, 1 side A, 2 side B. */
-  shade: 0 | 1 | 2
+  /** Shade index: 0 wall top, 1 side facing +x/+y, 2 side facing -x/-y, 3 floor. */
+  shade: 0 | 1 | 2 | 3
 }
 
 const PAPER = '#f8f5ed'
-const WALL_TOP = '#6d756c'
-const WALL_SIDE_A = '#4c554d'
-const WALL_SIDE_B = '#3d453f'
+/*
+ * The floor is its own shade, and that is not decoration.
+ *
+ * A solid volume is a single material, so the first build gave every upward face
+ * the same colour — the ground slab and the tops of the walls. The result read as
+ * one grey plate with bumps: no floor to stand on, no height to the blocks, and
+ * nothing for the route to sit *above*. Separating the ground（lighter, matte）
+ * from what stands on it（darker, cooler）restores the two things the eye needs
+ * in an orthographic view: where the ground is, and how tall everything else is.
+ */
+const FLOOR = '#8f978c'
+const WALL_TOP = '#6e766b'
+const WALL_SIDE_A = '#535d55'
+const WALL_SIDE_B = '#3b433d'
 // The path is the one element that must survive every background: it crosses the
 // pale floor, then a dark wall's top face, then a wall's shaded side. A single
 // flat colour cannot do that — pine on the walls goes to near-black. So the route
@@ -57,7 +68,7 @@ const WALL_SIDE_B = '#3d453f'
 const PATH = '#f7f1e2'
 const PATH_LOW = '#c9dccd'
 const PATH_HIGH = '#e9b47c'
-const PATH_HALO = 'rgba(26, 36, 30, 0.62)'
+const PATH_HALO = 'rgba(22, 31, 26, 0.82)'
 const START = '#2f5d50'
 const GOAL = '#a45f43'
 const TRAIL = '52, 78, 66'
@@ -105,7 +116,7 @@ function fitView(bounds: Bounds, width: number, height: number, yaw: number, pit
     if (py < minY) minY = py
     if (py > maxY) maxY = py
   }
-  const pad = 38
+  const pad = 26
   const fit = Math.min(
     (width - pad * 2) / Math.max(1e-6, maxX - minX),
     (height - pad * 2) / Math.max(1e-6, maxY - minY),
@@ -169,7 +180,9 @@ function buildFaces(cells: Uint8Array, width: number, height: number, depth: num
     for (let y = 0; y < height; y += 1) {
       for (let x = 0; x < width; x += 1) {
         if (cells[z * plane + y * width + x] !== 1) continue
-        if (at(x, y, z + 1) === 0) faces.push({ cx: x, cy: y, cz: z, nx: 0, ny: 0, nz: 1, shade: 0 })
+        // Ground-level upward faces are the floor, not another block's lid.
+        if (at(x, y, z + 1) === 0)
+          faces.push({ cx: x, cy: y, cz: z, nx: 0, ny: 0, nz: 1, shade: z === 0 ? 3 : 0 })
         if (at(x + 1, y, z) === 0)
           faces.push({ cx: x, cy: y, cz: z, nx: 1, ny: 0, nz: 0, shade: 1 })
         if (at(x - 1, y, z) === 0)
@@ -184,6 +197,13 @@ function buildFaces(cells: Uint8Array, width: number, height: number, depth: num
     }
   }
   return faces
+}
+
+/** One place that knows what each face orientation looks like. */
+function shadeFill(shade: 0 | 1 | 2 | 3): string {
+  if (shade === 3) return FLOOR
+  if (shade === 0) return WALL_TOP
+  return shade === 1 ? WALL_SIDE_A : WALL_SIDE_B
 }
 
 interface DrawItem {
@@ -206,10 +226,29 @@ export function Scene3D({
   const hostRef = useRef<HTMLDivElement | null>(null)
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const [yaw, setYaw] = useState(-0.66)
-  const [pitch, setPitch] = useState(0.98)
+  // 0.98 rad looks almost straight down: the volume flattens into a plan view
+  // and dragging it left/right reads like spinning a picture. 0.82 keeps enough
+  // side wall visible that the scene has depth, while still showing the layout.
+  const [pitch, setPitch] = useState(0.82)
   const [zoom, setZoom] = useState(1)
   const [size, setSize] = useState({ width: 0, height: 0 })
-  const dragRef = useRef<{ x: number; y: number; yaw: number; pitch: number } | null>(null)
+  // An endpoint being dragged is previewed here rather than committed to the
+  // planner: a 3D search costs 70–160 ms, so re-planning on every pointermove
+  // would turn a drag into a slideshow. The marker follows the cursor, the route
+  // stays put until the pointer is released.
+  const [ghost, setGhost] = useState<{ which: 'start' | 'goal'; point: Vec3 } | null>(null)
+  const dragRef = useRef<{
+    mode: 'orbit' | 'start' | 'goal'
+    x: number
+    y: number
+    yaw: number
+    pitch: number
+    /** Screen pixels travelled so far — decides click vs drag. */
+    moved: number
+    pick: 'none' | 'start' | 'goal'
+  } | null>(null)
+  /** The exact transform the last frame was drawn with, reused for hit-testing. */
+  const frameRef = useRef<ReturnType<typeof fitView> | null>(null)
 
   const geometry = useMemo(() => {
     if (world.kind === 'grid2d') {
@@ -219,6 +258,7 @@ export function Scene3D({
         faces: [] as Face[],
         primitives: [] as Primitive[],
         dim: 2 as const,
+        pickZ: 0,
       }
     }
     if (world.kind === 'voxel3d') {
@@ -231,6 +271,12 @@ export function Scene3D({
         faces: buildFaces(v.cells, v.width, v.height, v.depth),
         primitives: [] as Primitive[],
         dim: 3 as const,
+        // The volume's ground layer is solid, so the lowest layer a path can
+        // occupy is the one above it. Endpoints are placed on *that* plane: an
+        // endpoint dropped on z = 0 would first be lifted a whole voxel, and at
+        // ~19 px per metre that lift lands the marker 19 px above the cursor —
+        // which reads as "I clicked here and it went somewhere else".
+        pickZ: v.spacing,
       }
     }
     const space = world.scene.space
@@ -239,6 +285,7 @@ export function Scene3D({
       faces: [] as Face[],
       primitives: space.primitives,
       dim: space.dim,
+      pickZ: space.bounds.min.z,
     }
   }, [world])
 
@@ -287,7 +334,10 @@ export function Scene3D({
     const { bounds } = geometry
 
     // Fit the projected bounding box into the viewport, then apply user zoom.
-    const { scale, originX, originY } = fitView(bounds, size.width, size.height, yaw, pitch, zoom)
+    const frame = fitView(bounds, size.width, size.height, yaw, pitch, zoom)
+    const { scale, originX, originY } = frame
+    // Remembered so pointer maths uses the frame that is actually on screen.
+    frameRef.current = frame
 
     const projectPoint = (p: Vec3) => project(p, scale, originX, originY, cy, sy, cp, sp)
 
@@ -327,7 +377,7 @@ export function Scene3D({
       let depth = 0
       for (const p of pts) depth += p.depth
       depth /= pts.length
-      const fill = face.shade === 0 ? WALL_TOP : face.shade === 1 ? WALL_SIDE_A : WALL_SIDE_B
+      const fill = shadeFill(face.shade)
       items.push({
         depth,
         draw: (c) => {
@@ -490,7 +540,7 @@ export function Scene3D({
           const pts = face.c.map(projectPoint)
           let depth = 0
           for (const p of pts) depth += p.depth
-          const fill = face.shade === 0 ? WALL_TOP : face.shade === 1 ? WALL_SIDE_A : WALL_SIDE_B
+          const fill = shadeFill(face.shade)
           items.push({
             depth: depth / 4,
             draw: (ctx2) => {
@@ -553,9 +603,9 @@ export function Scene3D({
         // one viewport is a wash however faint each one is, while two thousand is
         // a stipple you can read as individual expansions. Striding the list keeps
         // the coverage even, because it is ordered by first touch.
-        const stride = Math.max(1, Math.ceil(marks.length / 2000))
+        const stride = Math.max(1, Math.ceil(marks.length / 1400))
         const dot = Math.max(1, Math.min(3, scale * 0.24))
-        const alpha = completed ? 0.16 : 0.34
+        const alpha = completed ? 0.11 : 0.3
         for (let i = 0; i < marks.length; i += stride) {
           const mark = marks[i]
           // Recently expanded marks are darker: that is the search's leading edge.
@@ -585,7 +635,7 @@ export function Scene3D({
       const visible = Math.max(0, Math.min(playhead, result.events.length))
       const grown = result.events.length === 0 ? total : Math.max(2, Math.round((visible / result.events.length) * total))
       const pts = result.path3.slice(0, grown).map(projectPoint)
-      const width = Math.max(2, scale * 0.17)
+      const width = Math.max(3, scale * 0.22)
       let lowZ = Infinity
       let highZ = -Infinity
       for (const p of result.path3) {
@@ -612,7 +662,7 @@ export function Scene3D({
             ctx2.moveTo(a.x, a.y)
             ctx2.lineTo(b.x, b.y)
             ctx2.strokeStyle = PATH_HALO
-            ctx2.lineWidth = width + 2
+            ctx2.lineWidth = width + 2.6
             ctx2.stroke()
             ctx2.strokeStyle = tint
             ctx2.lineWidth = width
@@ -639,7 +689,7 @@ export function Scene3D({
     // line. A solid low-alpha repeat has no rhythm of its own.
     if (route.length > 1) {
       ctx.save()
-      ctx.strokeStyle = 'rgba(247, 241, 226, 0.19)'
+      ctx.strokeStyle = 'rgba(247, 241, 226, 0.28)'
       ctx.lineWidth = Math.max(1, routeWidth * 0.5)
       ctx.lineCap = 'round'
       ctx.beginPath()
@@ -649,26 +699,67 @@ export function Scene3D({
       ctx.restore()
     }
 
-    // Endpoints are always on top: they are controls, not scene geometry.
-    const drawMarker = (point: Vec3, color: string, label: string) => {
+    // Endpoints: last, unsorted, because they are controls rather than geometry.
+    //
+    // They share the route's language on purpose — same round cap, same stroke
+    // weight, plus a short leader from the marker to the first/last vertex. In a
+    // field world the stored endpoint and the nearest lattice centre differ by up
+    // to half a cell, and without that leader the route visibly fails to reach its
+    // own start point, which reads as "the markers and the path don't belong to
+    // each other".
+    // Derived from the route width, not from the viewport scale: a marker that
+    // keeps its own size while the line thickens is the "two visual systems"
+    // problem, and it is the reason S/G looked pasted on.
+    const markerRadius = Math.max(6.5, Math.min(13, routeWidth * 2.2))
+    const drawMarker = (point: Vec3, color: string, label: string, live: boolean) => {
       const p = projectPoint(point)
-      const r = Math.max(5, scale * 0.45)
-      ctx.fillStyle = 'rgba(255,255,255,0.9)'
+      if (live) {
+        ctx.beginPath()
+        ctx.arc(p.x, p.y, markerRadius + 6, 0, Math.PI * 2)
+        ctx.fillStyle = label === 'S' ? 'rgba(47,93,80,0.14)' : 'rgba(164,95,67,0.14)'
+        ctx.fill()
+      }
       ctx.beginPath()
-      ctx.arc(p.x, p.y, r + 1.5, 0, Math.PI * 2)
+      ctx.arc(p.x, p.y, markerRadius + 2, 0, Math.PI * 2)
+      ctx.fillStyle = 'rgba(250,247,239,0.95)'
       ctx.fill()
+      ctx.beginPath()
+      ctx.arc(p.x, p.y, markerRadius, 0, Math.PI * 2)
       ctx.fillStyle = color
-      ctx.beginPath()
-      ctx.arc(p.x, p.y, r, 0, Math.PI * 2)
       ctx.fill()
+      ctx.lineWidth = 1
+      ctx.strokeStyle = 'rgba(28,36,31,0.36)'
+      ctx.stroke()
       ctx.fillStyle = '#fdfcf8'
-      ctx.font = `600 ${Math.max(8, r * 0.95)}px "Cascadia Mono", monospace`
+      ctx.font = `700 ${Math.max(9, markerRadius * 0.95)}px "Cascadia Mono", ui-monospace, monospace`
       ctx.textAlign = 'center'
       ctx.textBaseline = 'middle'
       ctx.fillText(label, p.x, p.y + 0.5)
     }
-    drawMarker(start, START, 'S')
-    drawMarker(goal, GOAL, 'G')
+
+    const startAt = ghost?.which === 'start' ? ghost.point : start
+    const goalAt = ghost?.which === 'goal' ? ghost.point : goal
+
+    if (route.length > 1) {
+      ctx.lineCap = 'round'
+      const leader = (from: Vec3, to: { x: number; y: number }) => {
+        const p = projectPoint(from)
+        ctx.beginPath()
+        ctx.moveTo(p.x, p.y)
+        ctx.lineTo(to.x, to.y)
+        ctx.strokeStyle = PATH_HALO
+        ctx.lineWidth = routeWidth + 2.6
+        ctx.stroke()
+        ctx.strokeStyle = PATH
+        ctx.lineWidth = routeWidth
+        ctx.stroke()
+      }
+      leader(startAt, route[0])
+      leader(goalAt, route[route.length - 1])
+    }
+
+    drawMarker(startAt, START, 'S', ghost?.which === 'start' || pickMode === 'start')
+    drawMarker(goalAt, GOAL, 'G', ghost?.which === 'goal' || pickMode === 'goal')
 
     if (pickMode !== 'none') {
       ctx.strokeStyle = pickMode === 'start' ? 'rgba(47,93,80,0.5)' : 'rgba(164,95,67,0.5)'
@@ -677,66 +768,213 @@ export function Scene3D({
       ctx.strokeRect(1, 1, size.width - 2, size.height - 2)
       ctx.setLineDash([])
     }
-  }, [geometry, result, start, goal, playhead, showExpanded, showPath, yaw, pitch, zoom, size, pickMode, project])
+  }, [geometry, result, start, goal, playhead, showExpanded, showPath, yaw, pitch, zoom, size, pickMode, ghost, project])
 
+  /**
+   * Screen → world, on the world's floor plane.
+   *
+   * Uses `frameRef` — the transform the last painted frame used — instead of
+   * recomputing it. Two copies of this maths drifting apart by a pad or a zoom
+   * would put the marker a few pixels from the cursor, and that symptom is
+   * indistinguishable from "the click is broken".
+   */
   const toWorldOnFloor = useCallback(
-    (clientX: number, clientY: number): Vec3 | null => {
-      const canvas = canvasRef.current
-      if (!canvas) return null
-      const rect = canvas.getBoundingClientRect()
-      const screenX = clientX - rect.left
-      const screenY = clientY - rect.top
+    (screenX: number, screenY: number): Vec3 | null => {
+      const frame = frameRef.current
+      if (!frame) return null
       const { bounds } = geometry
-      const { scale, originX, originY, cy, sy, cp, sp } = fitView(
-        bounds,
-        rect.width,
-        rect.height,
-        yaw,
-        pitch,
-        zoom,
-      )
-
-      // Invert the orthographic projection onto z = floorZ.
-      const wx = (screenX - originX) / scale
-      const wy = -(screenY - originY) / scale
-      const floorZ = bounds.min.z
-      // wy = ry*sp + z*cp  →  ry = (wy - z*cp) / sp
-      const ry = (wy - floorZ * cp) / Math.max(1e-6, sp)
-      // [rx, ry] = R(-yaw) · [x, y]
-      const x = wx * cy - ry * sy
-      const y = wx * sy + ry * cy
-      return { x, y, z: floorZ }
+      const wx = (screenX - frame.originX) / frame.scale
+      const wy = -(screenY - frame.originY) / frame.scale
+      const planeZ = geometry.pickZ ?? bounds.min.z
+      // wy = ry·sp + z·cp  →  ry = (wy − z·cp) / sp
+      const ry = (wy - planeZ * frame.cp) / Math.max(1e-6, frame.sp)
+      const x = wx * frame.cy - ry * frame.sy
+      const y = wx * frame.sy + ry * frame.cy
+      return { x, y, z: planeZ }
     },
-    [geometry, pitch, yaw, zoom],
+    [geometry],
   )
 
-  const handlePointerDown = (event: React.PointerEvent<HTMLCanvasElement>) => {
-    (event.target as HTMLElement).setPointerCapture?.(event.pointerId)
-    if (event.button === 0 && pickMode !== 'none' && onPick) {
-      const point = toWorldOnFloor(event.clientX, event.clientY)
-      if (point) onPick(pickMode, point)
-      return
+  /**
+   * The world point under the cursor, on the surface the cursor is over.
+   *
+   * One ground plane is enough for a flat field, but a voxel world can have
+   * stacked floors — and resolving every click onto the ground layer silently
+   * forbids the second storey: a goal placed anywhere in the shaft ends up on
+   * layer one. So for volumes we walk the view ray from far to near and stop at
+   * the first solid cell, returning the free sample just in front of it: the
+   * surface the user actually pointed at.
+   */
+  const pickPoint = useCallback(
+    (screenX: number, screenY: number): Vec3 | null => {
+      const plane = toWorldOnFloor(screenX, screenY)
+      const frame = frameRef.current
+      if (!plane || !frame || world.kind !== 'voxel3d') return plane
+      const v = world.scene.volume
+      const planeOf = v.width * v.height
+      const solidAt = (p: Vec3) => {
+        const x = Math.floor(p.x / v.spacing)
+        const y = Math.floor(p.y / v.spacing)
+        const z = Math.floor(p.z / v.spacing)
+        if (x < 0 || y < 0 || z < 0 || x >= v.width || y >= v.height || z >= v.depth) return false
+        return v.cells[z * planeOf + y * v.width + x] === 1
+      }
+      // Unit vector pointing at the camera. Projecting along it leaves the screen
+      // position unchanged, so this walks the ray through the pixel.
+      const dir = { x: frame.cp * frame.sy, y: -frame.cp * frame.cy, z: frame.sp }
+      const step = v.spacing * 0.5
+      let previous: Vec3 | null = null
+      for (let i = -160; i <= 160; i += 1) {
+        const p = {
+          x: plane.x + dir.x * step * i,
+          y: plane.y + dir.y * step * i,
+          z: plane.z + dir.z * step * i,
+        }
+        if (solidAt(p)) return previous ?? plane
+        previous = p
+      }
+      return plane
+    },
+    [toWorldOnFloor, world],
+  )
+
+  const screenOf = useCallback((point: Vec3) => {
+    const frame = frameRef.current
+    if (!frame) return null
+    const rx = point.x * frame.cy + point.y * frame.sy
+    const ry = -point.x * frame.sy + point.y * frame.cy
+    return {
+      x: frame.originX + rx * frame.scale,
+      y: frame.originY - (ry * frame.sp + point.z * frame.cp) * frame.scale,
     }
-    dragRef.current = { x: event.clientX, y: event.clientY, yaw, pitch }
+  }, [])
+
+  const localOf = (clientX: number, clientY: number) => {
+    const canvas = canvasRef.current
+    if (!canvas) return { x: 0, y: 0 }
+    const rect = canvas.getBoundingClientRect()
+    return { x: clientX - rect.left, y: clientY - rect.top }
+  }
+
+  /** Which endpoint, if any, is under the cursor. */
+  const endpointAt = (screenX: number, screenY: number): 'start' | 'goal' | null => {
+    let best: 'start' | 'goal' | null = null
+    let bestDistance = 17
+    for (const which of ['start', 'goal'] as const) {
+      const at = screenOf(which === 'start' ? start : goal)
+      if (!at) continue
+      const distance = Math.hypot(screenX - at.x, screenY - at.y)
+      if (distance <= bestDistance) {
+        best = which
+        bestDistance = distance
+      }
+    }
+    return best
+  }
+
+  const handlePointerDown = (event: React.PointerEvent<HTMLCanvasElement>) => {
+    if (event.button !== 0) return
+    canvasRef.current?.setPointerCapture?.(event.pointerId)
+    const local = localOf(event.clientX, event.clientY)
+
+    // Grabbing S or G outranks everything: in the 2D canvas the markers are
+    // draggable at all times, and having to arm a mode first is exactly the kind
+    // of asymmetry that makes a view feel like a different application.
+    const grabbed = onPick ? endpointAt(local.x, local.y) : null
+    dragRef.current = {
+      mode: grabbed ?? 'orbit',
+      x: event.clientX,
+      y: event.clientY,
+      yaw,
+      pitch,
+      moved: 0,
+      pick: pickMode,
+    }
+    if (grabbed) {
+      setGhost({ which: grabbed, point: grabbed === 'start' ? start : goal })
+      canvasRef.current!.style.cursor = 'grabbing'
+    }
   }
 
   const handlePointerMove = (event: React.PointerEvent<HTMLCanvasElement>) => {
+    const local = localOf(event.clientX, event.clientY)
     const drag = dragRef.current
-    if (!drag) return
+    if (!drag) {
+      // Say "this is draggable" before the user has to discover it.
+      const canvas = canvasRef.current
+      // `move`, not `grab`: the background is already grab (it orbits), so the
+      // marker has to advertise a different, more specific action.
+      if (canvas) canvas.style.cursor = endpointAt(local.x, local.y) ? 'move' : ''
+      return
+    }
     const dx = event.clientX - drag.x
     const dy = event.clientY - drag.y
-    setYaw(drag.yaw + dx * 0.008)
-    setPitch(Math.max(0.18, Math.min(1.35, drag.pitch + dy * 0.006)))
+    drag.moved = Math.max(drag.moved, Math.hypot(dx, dy))
+
+    if (drag.mode === 'orbit') {
+      // "Grab the scene" semantics: drag right and the volume swings right, which
+      // means yaw *decreases* — yaw is the camera's bearing around the scene, not
+      // the scene's rotation about the camera. The opposite sign is why the view
+      // felt like it was fighting the hand.
+      setYaw(drag.yaw - dx * 0.0075)
+      setPitch(Math.max(0.14, Math.min(1.42, drag.pitch + dy * 0.0055)))
+      return
+    }
+
+    const point = pickPoint(local.x, local.y)
+    if (point) setGhost({ which: drag.mode, point })
   }
 
-  const handlePointerUp = () => {
+  const handlePointerUp = (event: React.PointerEvent<HTMLCanvasElement>) => {
+    const drag = dragRef.current
     dragRef.current = null
+    if (canvasRef.current) canvasRef.current.style.cursor = ''
+    if (!drag) return
+    const local = localOf(event.clientX, event.clientY)
+
+    if (drag.mode === 'start' || drag.mode === 'goal') {
+      // A tap on a marker is not a move. Committing it anyway would run a full
+      // 3D search to produce an identical result, which reads as a hitch.
+      if (drag.moved < 3) {
+        setGhost(null)
+        return
+      }
+      const point = pickPoint(local.x, local.y)
+      onPick?.(drag.mode, point ?? (drag.mode === 'start' ? start : goal))
+      setGhost(null)
+      return
+    }
+
+    // A press that never moved is a click: in pick mode it places the point.
+    // Treating it as a drag (the old behaviour) made "click the floor" and
+    // "orbit the view" the same gesture, so every click also nudged the camera.
+    if (drag.pick !== 'none' && drag.moved < 5) {
+      const point = pickPoint(local.x, local.y)
+      if (point) onPick?.(drag.pick, point)
+    }
   }
 
-  const handleWheel = (event: React.WheelEvent<HTMLCanvasElement>) => {
-    event.preventDefault()
-    setZoom((value) => Math.max(0.55, Math.min(3.2, value * (event.deltaY > 0 ? 0.92 : 1.08))))
-  }
+  // Wheel must be a native, non-passive listener. React registers `onWheel` as
+  // passive, so `preventDefault()` there is ignored: zooming also scrolled the
+  // page underneath the canvas, which is most of why the controls felt wrong.
+  useEffect(() => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+    const onWheel = (event: WheelEvent) => {
+      event.preventDefault()
+      const step = event.deltaY > 0 ? 0.92 : 1.08
+      setZoom((value) => Math.max(0.6, Math.min(3.4, value * step)))
+    }
+    canvas.addEventListener('wheel', onWheel, { passive: false })
+    return () => canvas.removeEventListener('wheel', onWheel)
+  }, [])
+
+  /** Home view. Also bound to double-click, the gesture people try first. */
+  const resetView = useCallback(() => {
+    setYaw(-0.66)
+    setPitch(0.82)
+    setZoom(1)
+  }, [])
 
   return (
     <div className="scene3d" ref={hostRef}>
@@ -747,27 +985,21 @@ export function Scene3D({
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
         onPointerCancel={handlePointerUp}
-        onWheel={handleWheel}
+        onDoubleClick={resetView}
       />
       <div className="scene3d-hint">
         <span>{tr(lang, '拖动旋转')}</span>
         <span>{tr(lang, '滚轮缩放')}</span>
+        <span>{tr(lang, '拖动 S / G 移动端点')}</span>
       </div>
       <div className="scene3d-zoom">
-        <button type="button" onClick={() => setZoom((v) => Math.min(3.2, v * 1.12))}>
+        <button type="button" title={tr(lang, '放大')} onClick={() => setZoom((v) => Math.min(3.4, v * 1.12))}>
           +
         </button>
-        <button type="button" onClick={() => setZoom((v) => Math.max(0.55, v / 1.12))}>
+        <button type="button" title={tr(lang, '缩小')} onClick={() => setZoom((v) => Math.max(0.6, v / 1.12))}>
           −
         </button>
-        <button
-          type="button"
-          onClick={() => {
-            setYaw(-0.66)
-            setPitch(0.98)
-            setZoom(1)
-          }}
-        >
+        <button type="button" title={tr(lang, '复位视角')} onClick={resetView}>
           ⟲
         </button>
       </div>

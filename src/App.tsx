@@ -2344,10 +2344,12 @@ export default function App() {
           <div className="stage-head">
             <div className="stage-title">
               <h2>
-                {tr(lang, map.name)}
+                {tr(lang, is3D ? world.meta.name : map.name)}
                 {isCustomMap ? <span className="custom-map-badge">{tr(lang, '已编辑')}</span> : null}
               </h2>
-              <p>{tr(lang, map.description)}</p>
+              {/* A 3D world is not a grid map, and using the map's copy here left the
+                  header claiming "Clutter" over the voxel hangar. */}
+              <p>{tr(lang, is3D ? world.meta.blurb : map.description)}</p>
               {result.continuous ? (
                 <span className="stage-note">
                   {lang === 'en'
@@ -2473,7 +2475,10 @@ export default function App() {
                   ? tr(lang, '在地面点击放置起点')
                   : editMode === 'goal'
                     ? tr(lang, '在地面点击放置终点')
-                    : tr(lang, '拖动旋转视角，滚轮缩放')
+                    : // The view's own hint strip already explains orbiting and
+                      // zooming; repeating it here made the toolbar read as two
+                      // competing instructions.
+                      ''
                 : editingMap
                   ? tr(lang, '编辑模式 · 在画布上拖动绘制，2D 栅格')
                   : editMode === 'start'

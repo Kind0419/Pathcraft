@@ -3691,6 +3691,9 @@ body.is-dragging-card * {
   height: 100%;
   cursor: grab;
   touch-action: none;
+  /* Dragging must not select the page text around the canvas. */
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 .scene3d-canvas:active {
