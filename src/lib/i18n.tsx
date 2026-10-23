@@ -378,6 +378,36 @@ const EN: Record<string, string> = {
   '位点': 'site',
   '中': '',
   '搜索策略参数': 'Search strategy parameter',
+
+  // algorithm families (the strategy card groups its 17 options)
+  '算法族': 'Family',
+  '改进图搜索': 'Improved',
+  '元启发': 'Metaheuristic',
+  '算法族与具体策略': 'Family and the specific strategy',
+  '双向 A*': 'Bidirectional A*',
+  '蚁群 ACO': 'Ant colony (ACO)',
+  '遗传算法': 'Genetic algorithm',
+
+  // capability-aware UI
+  '不适用': 'n/a',
+  '对当前算法不适用': 'Not applicable to this algorithm',
+  '当前算法': 'Current algorithm',
+  '当前算法不使用这个参数': 'This algorithm does not use this parameter',
+  '当前算法不使用这个参数，不扫描可行域。':
+    'This algorithm does not use this parameter, so no feasibility scan runs.',
+  '这个参数不会改变它的搜索结果，卡片会保留在装配表里但不参与编译。':
+    'This parameter cannot change its result; the card stays in the assembly but is left out of compilation.',
+  '这个算法是随机或重搜索，扫描约三十次代价太高，因此跳过可行域扫描。':
+    'This algorithm is stochastic or re-searches; running it thirty times is too expensive, so the feasibility scan is skipped.',
+  '该算法还能调': 'Also tunable',
+  '后台求解': 'Background',
+  '迭代循环': 'Iteration loop',
+  '迭代轮数': 'Generations',
+  '候选宽度': 'Candidate width',
+  '增量复用': 'Incremental reuse',
+  '每轮保留的候选数': 'Candidates kept per layer',
+  '随机搜索的代数': 'Generations of the stochastic search',
+  '复用上一轮的距离场': 'Reuse the distance field from the previous run',
 }
 
 const ZH_REPLACEMENTS: Array<[RegExp, string]> = [

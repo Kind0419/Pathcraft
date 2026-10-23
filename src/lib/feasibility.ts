@@ -1,5 +1,6 @@
 import { CARD_BY_ID } from './cards'
 import { plan } from './planner'
+import { solverFor } from './solvers/registry'
 import type { CardId, CardsState, GridMap } from './types'
 
 export interface FeasibilitySpan {
@@ -30,6 +31,10 @@ export function scanFeasibility(
 ): FeasibilityScan | null {
   const def = CARD_BY_ID[id]
   if (!def || def.kind === 'toggle') return null
+  // Scanning runs the planner ~30 times. That is fine for a graph search and
+  // misleading for a stochastic one, so those solvers opt out instead of
+  // freezing the panel.
+  if (!solverFor(cards).scan) return null
 
   const values: number[] = []
   if (def.kind === 'choice') {

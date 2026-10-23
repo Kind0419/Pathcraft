@@ -21,7 +21,7 @@ Pathcraft is a 2D path-planning workbench that runs in the browser. It supports 
 
 It decomposes planning into composable parameter modules:
 
-- **Search**: A*, Dijkstra, greedy best-first, BFS, DFS, weighted A*; RRT, RRT*, PRM, visibility graph
+- **Search**: 17 strategies — A*, Dijkstra, greedy best-first, BFS, DFS, weighted A*, JPS, IDA*, bidirectional A*, Beam, D* Lite; RRT, RRT*, PRM, visibility graph; ant colony (ACO), genetic algorithm
 - **Cost**: clearance, turn, length, diagonal bias, goal tolerance
 - **Constraints**: safety inflation, max turn, no U-turn, corner cut, expansion budget
 - **Post-process**: line-of-sight straightening, Chaikin smoothing (passes), path thinning (tolerance)
@@ -35,7 +35,7 @@ Pick modules from the component library, tune values in the assembly table, and 
 - Three 2D maps: Notch, Gate, Clutter
 - Map-size editor: 24–72 columns × 18–56 rows, up to 4032 cells; keeps existing walls and safely relocates start/goal
 - 2D map editing: draw / erase / brush 1·3·5 / clear / restore preset
-- Grid mode: A* / Dijkstra / greedy / BFS / DFS / weighted A*
+- Grid mode: A* / Dijkstra / greedy / BFS / DFS / weighted A* / JPS / IDA* / bidirectional A* / Beam / D* Lite
 - Continuous mode: RRT / RRT* / PRM / visibility graph with smooth continuous paths
 - Click or drag start and goal; markers slide along safe boundaries and snap to the nearest legal cell
 - Search replay: play, pause, timeline, 0.5x / 1x / 2x; the route grows from start to goal as it runs
@@ -81,6 +81,16 @@ RRT / RRT* / PRM / Visibility graph turn search points into continuous samples a
 | BFS | FIFO insertion order |
 | DFS | LIFO order |
 
+### Improved and incremental graph search
+
+| Strategy | Method | Note |
+|---|---|---|
+| JPS | jump points + forced-neighbour pruning | pruning needs uniform step cost, so clearance / turn weights are not applied |
+| IDA* | iterative deepening + transposition table + greedy upper bound | near-constant memory, may be slightly suboptimal |
+| Bidirectional A* | alternate expansion from both ends, join at the optimal meeting point | searches cell states, so there is no incoming heading and the turn weight does not apply |
+| Beam | keep only `w` candidates per layer | width comes from the "candidate width" card; fast, not optimal |
+| D* Lite | maintain rhs/g backwards from the goal | reuses the distance field when start/goal move; turn "incremental reuse" off to force a rebuild |
+
 ### Continuous 2D space
 
 | Strategy | Method |
@@ -92,7 +102,18 @@ RRT / RRT* / PRM / Visibility graph turn search points into continuous samples a
 
 Continuous planners apply one line-of-sight shortcut pass, round corners where clearance allows, then honour the line-of-sight / Chaikin / thinning cards. Safety inflation is used for sampled points, edge collision and corner rounding.
 
-Not yet included: D* Lite, JPS, IDA*, bidirectional search, Beam, ACO, genetic algorithms.
+### Metaheuristics
+
+| Strategy | Method |
+|---|---|
+| Ant colony (ACO) | pheromone τ^α·η^β path construction, evaporate / deposit each round; the canvas shows the pheromone heat field |
+| Genetic algorithm | seeded from an RRT path, 6 waypoints as genes, selection + crossover + perturbation, elitism |
+
+Both take their round count from the "generations" card (20+ recommended). They improve with rounds and are not guaranteed optimal.
+
+### "Not applicable" is stated, not hidden
+
+Some parameters genuinely do nothing for some algorithms (JPS and clearance weight, bidirectional A* and turn weight). Those cards are marked "n/a": they stay in the assembly but are excluded from compilation, and the metrics and flow panels say so.
 
 ---
 

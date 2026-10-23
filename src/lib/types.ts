@@ -17,6 +17,9 @@ export type CardId =
   | 'diagonalBias'
   | 'budget'
   | 'simplify'
+  | 'swarmWidth'
+  | 'iterations'
+  | 'incremental'
 
 export type CardGroup = 'search' | 'cost' | 'constraint' | 'bridge'
 
@@ -63,11 +66,49 @@ export interface CostBreakdown {
 
 export type PlanStatus = 'success' | 'infeasible'
 
+/** Which surface a run solved on. 3D adapters exist but are not wired to the UI. */
+export type SpaceKind = 'grid2d' | 'sampling2d' | 'voxel3d' | 'field2d' | 'field3d'
+
+/** How a solver iterates. The flow panel renders from this instead of guessing. */
+export type TraceKind =
+  | 'graph'
+  | 'jps'
+  | 'iterative'
+  | 'bidirectional'
+  | 'beam'
+  | 'incremental'
+  | 'sampling'
+  | 'meta'
+
+export interface TraceSpec {
+  kind: TraceKind
+  /** Loop keyword shown next to the stage title, e.g. `WHILE OPEN ≠ ∅`. */
+  loopLabel: string
+  init: string[]
+  loop: string[]
+  terminate: string[]
+}
+
+/** Optional per-cell field for visualisation (pheromone, 3D slice, …). */
+export interface PlanField {
+  kind: 'pheromone' | 'sampled'
+  width: number
+  height: number
+  values: Float32Array
+  max: number
+}
+
 export interface PlanResult {
   status: PlanStatus
   continuous: boolean
   path: Point[]
   rawPath: Point[]
+  /**
+   * Same route in 3D, for voxel / field spaces. The 2D UI ignores it; keeping
+   * it on the result means a 3D view can be added without changing the solver
+   * contract or the wire format.
+   */
+  path3?: Array<{ x: number; y: number; z: number }>
   events: SearchEvent[]
   expanded: number
   expandedCells: number
@@ -80,6 +121,16 @@ export interface PlanResult {
   smoothed: boolean
   algorithmLabel: string
   openAtEnd: number
+  solver?: string
+  space?: SpaceKind
+  trace?: TraceSpec
+  field?: PlanField
+  /** Honest note about settings this algorithm ignores, surfaced in the UI. */
+  note?: string
+  /** Discrete iteration counter (generations, ant rounds, IDA* passes…). */
+  rounds?: number
+  /** Where the answer came from; the UI shows this next to the solve time. */
+  transport?: 'inline' | 'worker' | 'http'
 }
 
 export interface RecipeSnapshot {

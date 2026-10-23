@@ -1,6 +1,7 @@
-import type { CSSProperties, DragEvent } from 'react'
+import { useEffect, useState, type CSSProperties, type DragEvent } from 'react'
 import { cardValueLabel, type CardDef } from '../lib/cards'
 import { tr, useLang } from '../lib/i18n'
+import { FAMILIES, SOLVER_BY_VALUE, type SolverFamily } from '../lib/solvers/registry'
 import type { CardState } from '../lib/types'
 import { Icon } from './Icon'
 
@@ -16,6 +17,8 @@ interface CardProps {
   onAdjustEnd: () => void
   draggable?: boolean
   dragging?: boolean
+  /** The selected algorithm cannot honour this parameter. */
+  inapplicable?: boolean
   onDragStart?: (event: DragEvent<HTMLSpanElement>) => void
   onDragEnd?: () => void
 }
@@ -32,10 +35,18 @@ export function Card({
   onAdjustEnd,
   draggable = false,
   dragging = false,
+  inapplicable = false,
   onDragStart,
   onDragEnd,
 }: CardProps) {
   const lang = useLang()
+  const familyOf = (value: number): SolverFamily =>
+    SOLVER_BY_VALUE[Math.round(value)]?.family ?? 'graph'
+  const [familyTab, setFamilyTab] = useState<SolverFamily>(familyOf(state.value))
+  const selectedFamily = familyOf(state.value)
+  useEffect(() => {
+    setFamilyTab(selectedFamily)
+  }, [selectedFamily])
   const title = tr(lang, def.title)
   const subtitle = tr(lang, def.subtitle)
   const hasSlider = def.kind !== 'toggle' && def.kind !== 'choice'
@@ -48,7 +59,9 @@ export function Card({
     <article
       className={`card ${enabled ? 'is-enabled' : 'is-disabled'} ${
         selected ? 'is-selected' : ''
-      } ${dragging ? 'is-dragging' : ''}`}
+      } ${dragging ? 'is-dragging' : ''} ${
+        inapplicable ? 'is-inapplicable' : ''
+      }`}
       style={{ '--card-accent': def.accent } as CSSProperties}
       onClick={onSelect}
       onKeyDown={(event) => {
@@ -88,7 +101,13 @@ export function Card({
           </span>
           <span className="card-subtitle" title={subtitle}>{subtitle}</span>
         </div>
-        <span className="card-value">{cardValueLabel(def, state.value, lang)}</span>
+        {inapplicable ? (
+          <span className="card-na" title={tr(lang, '当前算法不使用这个参数')}>
+            {tr(lang, '不适用')}
+          </span>
+        ) : def.kind === 'toggle' ? null : (
+          <span className="card-value">{cardValueLabel(def, state.value, lang)}</span>
+        )}
         <button
           className={`switch ${enabled ? 'is-on' : ''}`}
           type="button"
@@ -106,27 +125,60 @@ export function Card({
 
       {def.kind === 'choice' ? (
         <div
-          className="card-choice"
+          className="card-choice-block"
           onClick={(event) => event.stopPropagation()}
           onPointerDown={(event) => event.stopPropagation()}
         >
-          {def.options?.map((option, optionIndex) => (
-            <button
-              key={option}
-              type="button"
-              className={`choice-chip ${
-                Math.round(state.value) === optionIndex ? 'is-active' : ''
-              }`}
-              disabled={!enabled}
-              aria-pressed={Math.round(state.value) === optionIndex}
-              onClick={(event) => {
-                event.stopPropagation()
-                onValue(optionIndex)
-              }}
-            >
-              {tr(lang, option)}
-            </button>
-          ))}
+          {def.id === 'strategy' ? (
+            <div className="choice-tabs" role="tablist" aria-label={tr(lang, '算法族')}>
+              {FAMILIES.map((family) => (
+                <button
+                  key={family.id}
+                  type="button"
+                  role="tab"
+                  aria-selected={familyTab === family.id}
+                  className={`choice-tab ${familyTab === family.id ? 'is-active' : ''} ${
+                    selectedFamily === family.id ? 'has-selection' : ''
+                  }`}
+                  disabled={!enabled}
+                  onClick={(event) => {
+                    event.stopPropagation()
+                    setFamilyTab(family.id)
+                  }}
+                >
+                  {tr(lang, lang === 'en' ? family.labelEn : family.label)}
+                </button>
+              ))}
+            </div>
+          ) : null}
+          <div className="card-choice">
+            {def.options?.map((option, optionIndex) => {
+              if (
+                def.id === 'strategy' &&
+                familyOf(optionIndex) !== familyTab
+              ) {
+                return null
+              }
+              return (
+                <button
+                  key={option}
+                  type="button"
+                  className={`choice-chip ${
+                    Math.round(state.value) === optionIndex ? 'is-active' : ''
+                  }`}
+                  disabled={!enabled}
+                  aria-pressed={Math.round(state.value) === optionIndex}
+                  title={tr(lang, option)}
+                  onClick={(event) => {
+                    event.stopPropagation()
+                    onValue(optionIndex)
+                  }}
+                >
+                  {tr(lang, option)}
+                </button>
+              )
+            })}
+          </div>
         </div>
       ) : null}
 
@@ -145,23 +197,14 @@ export function Card({
             value={state.value}
             disabled={!enabled}
             aria-label={lang === 'en' ? `${title} parameter ${def.param}` : `${def.title}参数 ${def.param}`}
-            style={
-              {
-                '--fill': `${fill}%`,
-                '--range-color': def.accent,
-              } as CSSProperties
-            }
+            title={`${def.min ?? 0} – ${def.max ?? 1}`}
+            style={{ '--fill': `${fill}%` } as CSSProperties}
             onChange={(event) => onValue(Number(event.target.value))}
             onPointerDown={onAdjustStart}
             onPointerUp={onAdjustEnd}
             onPointerCancel={onAdjustEnd}
             onBlur={onAdjustEnd}
           />
-          <span className="card-scale">
-            {def.min ?? 0}
-            <span>—</span>
-            {def.max ?? 1}
-          </span>
         </div>
       ) : null}
     </article>

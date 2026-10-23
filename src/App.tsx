@@ -35,7 +35,16 @@ import {
   type Lang,
 } from './lib/i18n'
 import { getMap, mapFromCells, MAPS, MAP_LIMITS, clampMapSize, findFreeCell, resizeCells } from './lib/maps'
-import { plan } from './lib/planner'
+import { usePlan } from './hooks/usePlan'
+import { readSetting, writeSetting } from './lib/storage'
+import {
+  FAMILIES,
+  SOLVER_BY_VALUE,
+  cardApplies,
+  optionalCards,
+  solverFor,
+  type SolverSpec,
+} from './lib/solvers/registry'
 import type {
   CardId,
   CardsState,
@@ -241,12 +250,26 @@ function compileFormula(
     lang,
     CARD_BY_ID.strategy.options?.[modeIndex] ?? 'A*',
   )
-  if (modeIndex >= 6) {
+  // Ask the registry instead of using the option index: the index order is a
+  // share-link detail, so ">= 6 means sampling" stopped being true the moment
+  // JPS / IDA* / D* Lite / ACO were appended to the same list.
+  const spec = solverFor(cards)
+  if (spec.family === 'sampling') {
     return lang === 'en'
       ? `${modeLabel}: sample → steer → collision check → tree/roadmap → path`
       : `${modeLabel}：采样 → 步进 → 碰撞检查 → 树 / 路线图 → 路径`
   }
-  const ignoreHeuristic = modeIndex === 1 || modeIndex === 3 || modeIndex === 4
+  if (spec.family === 'meta') {
+    return lang === 'en'
+      ? `${modeLabel}: seed → iterate (evaluate · select · perturb) → keep best`
+      : `${modeLabel}：初始解 → 迭代（评估 · 选择 · 扰动）→ 保留最优`
+  }
+  if (spec.costModel === 'uniform') {
+    return lang === 'en'
+      ? `${modeLabel}: uniform step cost, so clearance / turn weights are not in the objective`
+      : `${modeLabel}：等步长代价，间隙权重与转角权重不进入目标函数`
+  }
+  const ignoreHeuristic = spec.costModel === 'distance'
   const lengthWeight = cards.lengthWeight.enabled
     ? `${cards.lengthWeight.value.toFixed(2)}·g`
     : 'g'
@@ -261,9 +284,15 @@ function compileFormula(
     if (id === 'heuristic' && !ignoreHeuristic) {
       terms.push(`${state.value.toFixed(2)}·h`)
     }
-    if (id === 'clearance') terms.push(`${state.value.toFixed(2)}·c`)
-    if (id === 'turn') terms.push(`${state.value.toFixed(2)}·t`)
-    if (id === 'diagonalBias') terms.push(`${state.value.toFixed(2)}·o`)
+    if (id === 'clearance' && spec.costModel === 'full') {
+      terms.push(`${state.value.toFixed(2)}·c`)
+    }
+    if (id === 'turn' && spec.costModel === 'full' && spec.directional) {
+      terms.push(`${state.value.toFixed(2)}·t`)
+    }
+    if (id === 'diagonalBias' && spec.costModel === 'full') {
+      terms.push(`${state.value.toFixed(2)}·o`)
+    }
     if (id === 'collision') {
       constraints.push(`s.t. d ≥ ${state.value.toFixed(2)}`)
     }
@@ -508,6 +537,7 @@ function MetricsPanel({
           {localizeAlgorithm(lang, result.algorithmLabel)} · {result.continuous ? tr(lang, '连续空间') : cards.diagonal.enabled ? tr(lang, '8 邻域') : tr(lang, '4 邻域')} ·{' '}
           {plural(lang, result.waypoints, '个路径点', 'waypoint')}
         </p>
+        {result.note ? <p className="metric-note">{result.note}</p> : null}
       </div>
 
       <div className="stat-row">
@@ -667,10 +697,12 @@ function CardInspector({
   cards,
   order,
   continuous,
+  solver,
   onToggle,
   onValue,
   onAdjustStart,
   onAdjustEnd,
+  onAddCard,
 }: {
   id: CardId
   state: { enabled: boolean; value: number }
@@ -678,10 +710,12 @@ function CardInspector({
   cards: CardsState
   order: CardId[]
   continuous: boolean
+  solver: SolverSpec
   onToggle: () => void
   onValue: (value: number) => void
   onAdjustStart: () => void
   onAdjustEnd: () => void
+  onAddCard: (id: CardId) => void
 }) {
   const lang = useLang()
   const def = CARD_BY_ID[id]
@@ -716,7 +750,10 @@ function CardInspector({
     }
   }, [id, map, cards, order, hasSlider, continuous])
 
+  const applies = cardApplies(id, solver)
   const scan = scanState?.id === id ? scanState.scan : null
+  const scannable = solver.scan && applies
+  const missingOptional = optionalCards(solver).filter((card) => !order.includes(card))
   const formatBound = (value: number) => {
     if (def.kind === 'angle' || def.kind === 'budget' || def.kind === 'passes') {
       return value.toFixed(0)
@@ -769,6 +806,15 @@ function CardInspector({
         <p className="detail-lede">{tr(lang, def.subtitle)}</p>
       </header>
 
+      {!applies ? (
+        <div className="na-banner">
+          <strong>{tr(lang, '对当前算法不适用')}</strong>
+          <p>
+            {tr(lang, '当前算法')} {tr(lang, solver.label)}：{tr(lang, '这个参数不会改变它的搜索结果，卡片会保留在装配表里但不参与编译。')}
+          </p>
+        </div>
+      ) : null}
+
       <p className="detail-text">{tr(lang, def.detail)}</p>
 
       <div className="detail-spec">
@@ -793,21 +839,52 @@ function CardInspector({
           <strong>{cardValueLabel(def, state.value, lang)}</strong>
         </div>
         {def.kind === 'choice' ? (
-          <div className="choice-row inspector-choice">
-            {def.options?.map((option, index) => (
-              <button
-                key={option}
-                type="button"
-                className={`choice-chip ${
-                  Math.round(state.value) === index ? 'is-active' : ''
-                }`}
-                disabled={!state.enabled}
-                aria-pressed={Math.round(state.value) === index}
-                onClick={() => onValue(index)}
-              >
-                {tr(lang, option)}
-              </button>
-            ))}
+          <div className="inspector-choice">
+            {def.id === 'strategy' ? (
+              FAMILIES.map((family) => (
+                <div className="family-block" key={family.id}>
+                  <span className="family-head">
+                    {lang === 'en' ? family.labelEn : family.label}
+                    <em>{tr(lang, lang === 'en' ? family.hintEn : family.hint)}</em>
+                  </span>
+                  <div className="choice-row">
+                    {def.options?.map((option, index) =>
+                      SOLVER_BY_VALUE[index]?.family === family.id ? (
+                        <button
+                          key={option}
+                          type="button"
+                          className={`choice-chip ${
+                            Math.round(state.value) === index ? 'is-active' : ''
+                          }`}
+                          disabled={!state.enabled}
+                          aria-pressed={Math.round(state.value) === index}
+                          onClick={() => onValue(index)}
+                        >
+                          {tr(lang, option)}
+                        </button>
+                      ) : null,
+                    )}
+                  </div>
+                </div>
+              ))
+            ) : (
+              <div className="choice-row">
+                {def.options?.map((option, index) => (
+                  <button
+                    key={option}
+                    type="button"
+                    className={`choice-chip ${
+                      Math.round(state.value) === index ? 'is-active' : ''
+                    }`}
+                    disabled={!state.enabled}
+                    aria-pressed={Math.round(state.value) === index}
+                    onClick={() => onValue(index)}
+                  >
+                    {tr(lang, option)}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
         ) : hasSlider ? (
           <>
@@ -823,7 +900,6 @@ function CardInspector({
               style={
                 {
                   '--fill': `${fill}%`,
-                  '--range-color': def.accent,
                 } as CSSProperties
               }
               onChange={(event) => onValue(Number(event.target.value))}
@@ -836,6 +912,7 @@ function CardInspector({
               <span>{formatBound(min)}</span>
               <span>{formatBound(max)}</span>
             </div>
+            {scannable ? (
             <div className="feas-block">
               <div className="feas-head">
                 <span>{tr(lang, '可行区间')}</span>
@@ -876,6 +953,13 @@ function CardInspector({
                     : tr(lang, '扫描不会锁死滑杆，只用于提示')}
               </p>
             </div>
+            ) : (
+              <p className="feas-skip">
+                {applies
+                  ? tr(lang, '这个算法是随机或重搜索，扫描约三十次代价太高，因此跳过可行域扫描。')
+                  : tr(lang, '当前算法不使用这个参数，不扫描可行域。')}
+              </p>
+            )}
           </>
         ) : (
           <div className="toggle-note">
@@ -884,6 +968,18 @@ function CardInspector({
           </div>
         )}
       </section>
+
+      {missingOptional.length > 0 ? (
+        <div className="optional-cards">
+          <span>{tr(lang, '该算法还能调')}</span>
+          {missingOptional.map((card) => (
+            <button key={card} type="button" onClick={() => onAddCard(card)}>
+              + {tr(lang, CARD_BY_ID[card].title)}
+              <em>{CARD_BY_ID[card].param}</em>
+            </button>
+          ))}
+        </div>
+      ) : null}
 
       <p className="param-hint">
         {tr(lang, '参数不会被无解区间锁死。可行域可能分段出现，扫描结果只作为参考。')}
@@ -1037,10 +1133,14 @@ function RunPanel({
 function MetricsStrip({
   map,
   result,
+  pending,
+  progress,
   onOpen,
 }: {
   map: GridMap
   result: PlanResult
+  pending: boolean
+  progress: number
   onOpen: () => void
 }) {
   const lang = useLang()
@@ -1048,7 +1148,7 @@ function MetricsStrip({
   const lengthM = result.pathLength * map.cellSize
   const clearanceM = result.minClearance * map.cellSize
   return (
-    <div className="metrics-strip">
+    <div className={`metrics-strip ${pending ? 'is-pending' : ''}`}>
       <div className="strip-metric is-primary">
         <span>{tr(lang, '路径长度')}</span>
         <strong>
@@ -1074,6 +1174,14 @@ function MetricsStrip({
           <em>ms</em>
         </strong>
       </div>
+      {pending ? (
+        <div className="strip-pending" role="status">
+          <span>{tr(lang, '后台求解')}</span>
+          <div className="strip-pending-track" aria-hidden="true">
+            <i style={{ width: `${Math.round(progress * 100)}%` }} />
+          </div>
+        </div>
+      ) : null}
       <button type="button" className="strip-detail" onClick={onOpen}>
         {tr(lang, '查看指标')}
         <Icon name="chevronDown" size={13} />
@@ -1085,12 +1193,14 @@ function MetricsStrip({
 function LibraryItem({
   def,
   inRecipe,
+  inapplicable,
   onToggle,
   onHoverStart,
   onHoverEnd,
 }: {
   def: CardDef
   inRecipe: boolean
+  inapplicable: boolean
   onToggle: () => void
   onHoverStart: () => void
   onHoverEnd: () => void
@@ -1101,7 +1211,7 @@ function LibraryItem({
   return (
     <button
       type="button"
-      className={`library-item ${inRecipe ? 'is-in' : ''}`}
+      className={`library-item ${inRecipe ? 'is-in' : ''} ${inapplicable ? 'is-na' : ''}`}
       style={{ '--card-accent': def.accent } as CSSProperties}
       onClick={onToggle}
       onMouseEnter={onHoverStart}
@@ -1119,9 +1229,15 @@ function LibraryItem({
         <strong>{title}</strong>
         <em>{def.param}</em>
       </span>
-      <span className="library-action">
-        <Icon name={inRecipe ? 'check' : 'plus'} size={12} />
-      </span>
+      {inapplicable ? (
+        <span className="library-mark" title={tr(lang, '当前算法不使用这个参数')}>
+          {tr(lang, '不适用')}
+        </span>
+      ) : (
+        <span className="library-action">
+          <Icon name={inRecipe ? 'check' : 'plus'} size={12} />
+        </span>
+      )}
     </button>
   )
 }
@@ -1232,13 +1348,13 @@ export default function App() {
   const [hoverCard, setHoverCard] = useState<CardId | null>(null)
   const [rightTab, setRightTab] = useState<RightTab>('recipe')
   const [lang, setLang] = useState<Lang>(() =>
-    window.localStorage.getItem('pathcraft:lang:v1') === 'en' ? 'en' : 'zh',
+    readSetting('pathcraft:lang:v1') === 'en' ? 'en' : 'zh',
   )
   const [recipeOrder, setRecipeOrder] = useState<CardId[]>(
     () => INITIAL_RECIPE?.order ?? createDefaultRecipeOrder(),
   )
   const [recipeWidth, setRecipeWidth] = useState(() => {
-    const saved = Number(window.localStorage.getItem('pathcraft:recipe-width:v3'))
+    const saved = Number(readSetting('pathcraft:recipe-width:v3'))
     return Number.isFinite(saved) && saved >= 310 ? Math.min(560, saved) : 380
   })
   const [resizing, setResizing] = useState(false)
@@ -1330,10 +1446,8 @@ export default function App() {
     }
     return next
   }, [cards, recipeOrder])
-  const result = useMemo(
-    () => plan(activeMap, effectiveCards, recipeOrder),
-    [activeMap, effectiveCards, recipeOrder],
-  )
+  const planState = usePlan(activeMap, effectiveCards, recipeOrder)
+  const result = planState.result
   const previousRunRef = useRef<{ result: PlanResult; mapId: MapId } | null>(null)
 
   useEffect(() => {
@@ -1441,11 +1555,17 @@ export default function App() {
       editedCells,
       customSize,
     )}`
-    window.history.replaceState(null, '', hash)
+    // Inside a sandboxed iframe (or a file:// page opened in some viewers) a
+    // history write can be refused, and an effect that throws blanks the app.
+    try {
+      window.history.replaceState(null, '', hash)
+    } catch {
+      // The share link still works when copied from the export menu.
+    }
   }, [mapId, cards, recipeOrder, start, goal, editedCells, customSize])
 
   useEffect(() => {
-    window.localStorage.setItem('pathcraft:lang:v1', lang)
+    writeSetting('pathcraft:lang:v1', lang)
     document.documentElement.lang = lang === 'en' ? 'en' : 'zh-Hans'
     document.title =
       lang === 'en'
@@ -1475,7 +1595,7 @@ export default function App() {
     const onUp = () => {
       setResizing(false)
       resizeStartRef.current = null
-      window.localStorage.setItem('pathcraft:recipe-width:v3', String(recipeWidth))
+      writeSetting('pathcraft:recipe-width:v3', String(recipeWidth))
     }
     window.addEventListener('pointermove', onMove)
     window.addEventListener('pointerup', onUp, { once: true })
@@ -2051,6 +2171,7 @@ export default function App() {
                           key={def.id}
                           def={def}
                           inRecipe={recipeOrder.includes(def.id)}
+                          inapplicable={!cardApplies(def.id, planState.solver)}
                           onToggle={() => toggleRecipeCard(def.id)}
                           onHoverStart={() => setHoverCard(def.id)}
                           onHoverEnd={() => setHoverCard(null)}
@@ -2347,6 +2468,7 @@ export default function App() {
                 ghostContinuous={ghostContinuous}
               hoverCard={hoverCard}
               showExpanded={showExpanded}
+              showTrail={planState.solver.family !== 'meta'}
               showPath={showPath}
               showGhost={showGhost}
               editMode={editMode}
@@ -2394,6 +2516,8 @@ export default function App() {
             <MetricsStrip
               map={activeMap}
               result={result}
+              pending={planState.pending}
+              progress={planState.progress}
               onOpen={() => setRightTab('metrics')}
             />
           )}
@@ -2535,6 +2659,7 @@ export default function App() {
                           state={cards[id]}
                           selected={false}
                           index={recipeOrder.indexOf(id)}
+                          inapplicable={!cardApplies(id, planState.solver)}
                           onSelect={() => selectCard(id)}
                           onToggle={() =>
                             updateCard(id, { enabled: !cards[id].enabled })
@@ -2591,9 +2716,11 @@ export default function App() {
                 cards={effectiveCards}
                 order={recipeOrder}
                 continuous={result.continuous}
+                solver={planState.solver}
                 onToggle={() =>
                   updateCard(selectedCardId, { enabled: !selectedState.enabled })
                 }
+                onAddCard={addToRecipe}
                 onValue={(value) =>
                   updateCard(selectedCardId, {
                     value: clampCardValue(selectedCardId, value),

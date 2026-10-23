@@ -76,6 +76,7 @@ export function FlowPanel({
   const finished = result.events.length > 0 && eventIndex >= result.events.length
   const success = finished && result.status === 'success'
   const failed = finished && result.status === 'infeasible'
+  const done = success || failed
   const phase: 'init' | 'loop' | 'done' | 'fail' = !current
     ? 'init'
     : finished
@@ -143,6 +144,9 @@ export function FlowPanel({
     setOverIndex(null)
   }
 
+  const trace = result.trace
+  const isGraph = !trace || trace.kind === 'graph'
+
   return (
     <div className="panel-scroll flow-panel">
       <div className="flow-head">
@@ -160,15 +164,17 @@ export function FlowPanel({
         <div>
           <span>{tr(lang, '当前节点')}</span>
           <strong>
-            {current ? `(${current.x}, ${current.y})` : 'S'}
+            {current
+              ? `(${current.x < map.width ? current.x : current.x.toFixed(1)}, ${
+                  current.y < map.height ? current.y : current.y.toFixed(1)
+                })`
+              : 'S'}
           </strong>
         </div>
         <div>
           <span>g / h / f</span>
           <strong>
-            {current
-              ? `${fmt(current.g)} / ${fmt(current.h)} / ${fmt(current.f)}`
-              : '—'}
+            {current ? `${fmt(current.g)} / ${fmt(current.h)} / ${fmt(current.f)}` : '—'}
           </strong>
         </div>
         <div>
@@ -183,247 +189,163 @@ export function FlowPanel({
 
       <div className="flow-section-label">
         <span>{tr(lang, '控制流')}</span>
-        <em>{playing ? tr(lang, '回放中') : finished ? tr(lang, '本轮结束') : tr(lang, '已暂停')}</em>
+        <em>{playing ? tr(lang, '回放中') : done ? tr(lang, '本轮结束') : tr(lang, '已暂停')}</em>
       </div>
 
-      {result.continuous ? (
-        <ol className="trace-list trace-continuous">
-          <li className={`trace-stage ${phase === 'init' ? 'is-active' : 'is-past'}`}>
-            <span className="trace-node">01</span>
-            <div className="trace-body">
-              <div className="trace-stage-head">
-                <strong>{tr(lang, '初始化')}</strong>
-                <span>{mode === 8 || mode === 9 ? 'ROADMAP' : 'TREE'}</span>
-              </div>
-              <div className="trace-code">
-                <code>
-                  {mode === 8 || mode === 9
-                    ? 'roadmap ← {start, goal}'
-                    : 'tree ← {start, dir=∅}'}
-                </code>
-                <span>1 node</span>
-              </div>
-              <div className="trace-code">
-                <code>
-                  {mode === 8 || mode === 9
-                    ? 'nodes ← sampleFreeSpace(n)'
-                    : 'q_rand ← sampleFreeSpace()'}
-                </code>
-                <span>{tr(lang, '连续空间')}</span>
-              </div>
-            </div>
-          </li>
-
-          <li className={`trace-stage ${phase === 'loop' ? 'is-active' : success || failed ? 'is-past' : ''}`}>
-            <span className="trace-node">02</span>
-            <div className="trace-body">
-              <div className="trace-stage-head">
-                <strong>{tr(lang, '采样循环')}</strong>
-                <span>{mode === 9 ? 'VISIBILITY' : mode === 8 ? 'PRM' : mode === 7 ? 'RRT*' : 'RRT'}</span>
-              </div>
-              <div className="trace-code">
-                <code>while samples &lt; N_max:</code>
-                <span>{fmtNum(lang, result.expanded)}</span>
-              </div>
-              <div className="trace-code is-indent">
-                <code>q_rand ← sampleFreeSpace()</code>
-                <span>random</span>
-              </div>
-              <div className="trace-code is-indent">
-                <code>q_near ← nearest(tree, q_rand)</code>
-                <span>{current ? `g ${fmt(current.g)}` : '—'}</span>
-              </div>
-              <div className="trace-code is-indent">
-                <code>q_new ← steer(q_near, q_rand, step)</code>
-                <span>{current ? `(${current.x.toFixed(1)}, ${current.y.toFixed(1)})` : 'step 1.7'}</span>
-              </div>
-              <div className="trace-code is-indent">
-                <code>if collision(q_new): continue</code>
-                <span className="trace-chip">{tr(lang, '碰撞检查')}</span>
-              </div>
-              <div className="trace-code is-indent">
-                <code>{mode === 8 || mode === 9 ? 'connect(q, k-nearest)' : 'tree.add(q_new)'}</code>
-                <span>{mode === 7 ? tr(lang, '重连') : tr(lang, '加入')}</span>
-              </div>
-              <div className={`trace-code is-indent ${success ? 'is-hit' : ''}`}>
-                <code>if dist(q_new, goal) ≤ step: break</code>
-                <span className={`trace-chip ${success ? 'is-yes' : 'is-no'}`}>
-                  {success ? tr(lang, '命中终点') : tr(lang, '否')}
-                </span>
-              </div>
-            </div>
-          </li>
-
-          <li className={`trace-stage ${phase === 'done' || phase === 'fail' ? 'is-active' : ''}`}>
-            <span className="trace-node">03</span>
-            <div className="trace-body">
-              <div className="trace-stage-head">
-                <strong>{tr(lang, '终止')}</strong>
-                <span>RETURN</span>
-              </div>
-              {success ? (
-                <div className="trace-code">
-                  <code>return reconstruct(parent, goal)</code>
-                  <span className="trace-chip is-yes">{tr(lang, '命中终点')}</span>
-                </div>
-              ) : failed ? (
-                <div className="trace-code">
-                  <code>return ∅</code>
-                  <span className="trace-chip is-no">{tr(lang, '采样未连通')}</span>
-                </div>
-              ) : (
-                <div className="trace-code">
-                  <code>{tr(lang, '等待主循环退出…')}</code>
-                  <span>{playing ? tr(lang, '回放中') : tr(lang, '暂停')}</span>
-                </div>
-              )}
-            </div>
-          </li>
-
-          <li className={`trace-stage ${success ? 'is-active' : ''} ${postFocus ? 'is-linked' : ''}`}>
-            <span className="trace-node">04</span>
-            <div className="trace-body">
-              <div className="trace-stage-head">
-                <strong>{tr(lang, '后处理')}</strong>
-                <span>BRIDGE</span>
-              </div>
-              {success ? (
-                <>
-                  <div className="trace-code">
-                    <code>path ← shortcut(path) + recipe.post(path)</code>
-                    <span>{plural(lang, postCards.length, '个处理器', 'processor')}</span>
-                  </div>
-                  <div className="trace-chips">
-                    {postCards.map(({ id, def, state }) => (
-                      <button
-                        key={id}
-                        type="button"
-                        className="trace-card-chip"
-                        style={{ '--chip-accent': def.accent } as CSSProperties}
-                        onClick={() => onSelectCard(id)}
-                        onMouseEnter={() => onHoverStart(id)}
-                        onMouseLeave={onHoverEnd}
-                      >
-                        <span>{tr(lang, def.title)}</span>
-                        <em>{cardValueLabel(def, state.value, lang)}</em>
-                      </button>
-                    ))}
-                  </div>
-                </>
-              ) : (
-                <p className="trace-empty">{tr(lang, '无可行路径，后处理不会执行。')}</p>
-              )}
-            </div>
-          </li>
-
-          <li className={`trace-stage ${success ? 'is-active' : ''}`}>
-            <span className="trace-node">05</span>
-            <div className="trace-body">
-              <div className="trace-stage-head">
-                <strong>{tr(lang, '输出')}</strong>
-                <span>METRICS</span>
-              </div>
-              <div className="trace-output">
-                <div>
-                  <span>{tr(lang, '长度')}</span>
-                  <strong>{success ? `${fmt(result.pathLength * map.cellSize)} m` : '—'}</strong>
-                </div>
-                <div>
-                  <span>{tr(lang, '路径点')}</span>
-                  <strong>{success ? result.waypoints : '—'}</strong>
-                </div>
-                <div>
-                  <span>{tr(lang, '最小间隙')}</span>
-                  <strong>{success ? `${fmt(result.minClearance * map.cellSize)} m` : '—'}</strong>
-                </div>
-                <div>
-                  <span>{tr(lang, '求解')}</span>
-                  <strong>{fmt(result.solveTime, 1)} ms</strong>
-                </div>
-              </div>
-            </div>
-          </li>
-        </ol>
-      ) : (
       <ol className="trace-list">
         <li className={`trace-stage ${phase === 'init' ? 'is-active' : 'is-past'}`}>
           <span className="trace-node">01</span>
           <div className="trace-body">
             <div className="trace-stage-head">
               <strong>{tr(lang, '初始化')}</strong>
-              <span>INIT</span>
+              <span>{isGraph ? 'INIT' : trace?.kind.toUpperCase()}</span>
             </div>
-            <div className="trace-code">
-              <code>open ← {'{(S, dir=∅, g=0)}'}</code>
-              <span>open 1</span>
-            </div>
-            <div className="trace-code">
-              <code>h(S) = {fmt(result.events[0]?.h ?? 0)} · f(S) = {fmt(result.events[0]?.f ?? 0)}</code>
-              <span>{cards.collision.enabled ? `r_safe ${fmt(cards.collision.value)}` : tr(lang, '无障碍膨胀')}</span>
-            </div>
+            {isGraph ? (
+              <>
+                <div className="trace-code">
+                  <code>open ← {'{(S, dir=∅, g=0)}'}</code>
+                  <span>open 1</span>
+                </div>
+                <div className="trace-code">
+                  <code>
+                    h(S) = {fmt(result.events[0]?.h ?? 0)} · f(S) = {fmt(result.events[0]?.f ?? 0)}
+                  </code>
+                  <span>
+                    {cards.collision.enabled
+                      ? `r_safe ${fmt(cards.collision.value)}`
+                      : tr(lang, '无障碍膨胀')}
+                  </span>
+                </div>
+              </>
+            ) : (
+              (trace?.init ?? []).map((line) => (
+                <div className="trace-code" key={line}>
+                  <code>{line}</code>
+                  <span />
+                </div>
+              ))
+            )}
           </div>
         </li>
 
-        <li className={`trace-stage trace-loop ${phase === 'loop' ? 'is-active' : success || failed ? 'is-past' : ''}`}>
+        <li
+          className={`trace-stage trace-loop ${phase === 'loop' ? 'is-active' : done ? 'is-past' : ''}`}
+        >
           <span className="trace-node">02</span>
           <div className="trace-body">
             <div className="trace-stage-head">
-              <strong>{tr(lang, '主循环')}</strong>
-              <span>WHILE OPEN ≠ ∅</span>
+              <strong>{isGraph ? tr(lang, '主循环') : tr(lang, '迭代循环')}</strong>
+              <span>{isGraph ? 'WHILE OPEN ≠ ∅' : trace?.loopLabel}</span>
             </div>
 
-            <div className={`trace-code trace-formula ${isLinked(['strategy', 'heuristic']) ? 'is-linked' : ''}`}>
-              <code>{priorityFormula}</code>
-              <span>{mode === 3 || mode === 4 ? tr(lang, '队列序') : tr(lang, 'f 值最小')}</span>
-            </div>
-
-            <div className="trace-code">
-              <code>while open ≠ ∅:</code>
-              <span>{current ? `open ${current.openSize}` : 'open 1'}</span>
-            </div>
-            <div className="trace-code is-indent">
-              <code>n ← pop_min(open)</code>
-              <span>{current ? `n (${current.x}, ${current.y})` : 'n = S'}</span>
-            </div>
-            <div className="trace-code is-indent">
-              <code>if closed[n]: continue</code>
-              <span className="trace-chip">{tr(lang, '去重')}</span>
-            </div>
-            <div className="trace-code is-indent">
-              <code>expanded += 1</code>
-              <span>
-                {fmtNum(lang, expandedNow)}
-                {budgetEnabled ? ` / ${fmtNum(lang, budgetValue)}` : ''}
-              </span>
-            </div>
-            <div className={`trace-code is-indent ${success ? 'is-hit' : ''} ${isLinked(['goalTolerance']) ? 'is-linked' : ''}`}>
-              <code>if dist(n, G) ≤ {fmt(goalDistance)}: break</code>
-              <span className={`trace-chip ${success ? 'is-yes' : 'is-no'}`}>
-                {success ? tr(lang, '是 → 回溯') : tr(lang, '否')}
-              </span>
-            </div>
-            <div className={`trace-code is-indent ${budgetExceeded ? 'is-hit' : ''} ${isLinked(['budget']) ? 'is-linked' : ''}`}>
-              <code>if expanded &gt; N_max: break</code>
-              <span className={`trace-chip ${budgetExceeded ? 'is-yes' : 'is-no'}`}>
-                {budgetEnabled ? (budgetExceeded ? tr(lang, '是 → 无解') : tr(lang, '否')) : tr(lang, '未启用')}
-              </span>
-            </div>
-            <div className={`trace-code is-indent ${isLinked(['diagonal']) ? 'is-linked' : ''}`}>
-              <code>for m in δ(n):</code>
-              <span className="trace-chip">{cards.diagonal.enabled ? tr(lang, '8 邻域') : tr(lang, '4 邻域')}</span>
-            </div>
-            <div className={`trace-code is-indent-2 ${isLinked(['collision', 'cornerCut', 'noUTurn', 'maxTurn']) ? 'is-linked' : ''}`}>
-              <code>if filter(m): continue</code>
-              <span className="trace-chip">{activeFilters.join(' · ') || tr(lang, '无障碍过滤')}</span>
-            </div>
-            <div className={`trace-code is-indent-2 ${isLinked(['clearance', 'turn', 'lengthWeight', 'diagonalBias']) ? 'is-linked' : ''}`}>
-              <code>if g + c &lt; g(m): push</code>
-              <span className="trace-chip">{costTerms.join(' · ')}</span>
-            </div>
+            {isGraph ? (
+              <>
+                <div
+                  className={`trace-code trace-formula ${isLinked(['strategy', 'heuristic']) ? 'is-linked' : ''}`}
+                >
+                  <code>{priorityFormula}</code>
+                  <span>
+                    {mode === 3 || mode === 4 ? tr(lang, '队列序') : tr(lang, 'f 值最小')}
+                  </span>
+                </div>
+                <div className="trace-code">
+                  <code>while open ≠ ∅:</code>
+                  <span>{current ? `open ${current.openSize}` : 'open 1'}</span>
+                </div>
+                <div className="trace-code is-indent">
+                  <code>n ← pop_min(open)</code>
+                  <span>{current ? `n (${current.x}, ${current.y})` : 'n = S'}</span>
+                </div>
+                <div className="trace-code is-indent">
+                  <code>if closed[n]: continue</code>
+                  <span className="trace-chip">{tr(lang, '去重')}</span>
+                </div>
+                <div className="trace-code is-indent">
+                  <code>expanded += 1</code>
+                  <span>
+                    {fmtNum(lang, expandedNow)}
+                    {budgetEnabled ? ` / ${fmtNum(lang, budgetValue)}` : ''}
+                  </span>
+                </div>
+                <div
+                  className={`trace-code is-indent ${success ? 'is-hit' : ''} ${isLinked(['goalTolerance']) ? 'is-linked' : ''}`}
+                >
+                  <code>if dist(n, G) ≤ {fmt(goalDistance)}: break</code>
+                  <span className={`trace-chip ${success ? 'is-yes' : 'is-no'}`}>
+                    {success ? tr(lang, '是 → 回溯') : tr(lang, '否')}
+                  </span>
+                </div>
+                <div
+                  className={`trace-code is-indent ${budgetExceeded ? 'is-hit' : ''} ${isLinked(['budget']) ? 'is-linked' : ''}`}
+                >
+                  <code>if expanded &gt; N_max: break</code>
+                  <span className={`trace-chip ${budgetExceeded ? 'is-yes' : 'is-no'}`}>
+                    {budgetEnabled
+                      ? budgetExceeded
+                        ? tr(lang, '是 → 无解')
+                        : tr(lang, '否')
+                      : tr(lang, '未启用')}
+                  </span>
+                </div>
+                <div className={`trace-code is-indent ${isLinked(['diagonal']) ? 'is-linked' : ''}`}>
+                  <code>for m in δ(n):</code>
+                  <span className="trace-chip">
+                    {cards.diagonal.enabled ? tr(lang, '8 邻域') : tr(lang, '4 邻域')}
+                  </span>
+                </div>
+                <div
+                  className={`trace-code is-indent-2 ${isLinked(['collision', 'cornerCut', 'noUTurn', 'maxTurn']) ? 'is-linked' : ''}`}
+                >
+                  <code>if filter(m): continue</code>
+                  <span className="trace-chip">
+                    {activeFilters.join(' · ') || tr(lang, '无障碍过滤')}
+                  </span>
+                </div>
+                <div
+                  className={`trace-code is-indent-2 ${isLinked(['clearance', 'turn', 'lengthWeight', 'diagonalBias']) ? 'is-linked' : ''}`}
+                >
+                  <code>if g + c &lt; g(m): push</code>
+                  <span className="trace-chip">{costTerms.join(' · ')}</span>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="trace-code trace-formula">
+                  <code>
+                    n ← ({current ? current.x.toFixed(1) : '—'}, {current ? current.y.toFixed(1) : '—'})
+                  </code>
+                  <span>
+                    {current
+                      ? `g ${fmt(current.g)} · h ${fmt(current.h)} · f ${fmt(current.f)}`
+                      : '—'}
+                  </span>
+                </div>
+                {(trace?.loop ?? []).map((line) => (
+                  <div className="trace-code is-indent" key={line}>
+                    <code>{line}</code>
+                    <span />
+                  </div>
+                ))}
+                <div className={`trace-code is-indent ${budgetExceeded ? 'is-hit' : ''}`}>
+                  <code>expanded &gt; N_max ?</code>
+                  <span className={`trace-chip ${budgetExceeded ? 'is-yes' : 'is-no'}`}>
+                    {budgetEnabled
+                      ? `${fmtNum(lang, expandedNow)} / ${fmtNum(lang, budgetValue)}`
+                      : tr(lang, '未启用')}
+                  </span>
+                </div>
+                {result.rounds ? (
+                  <div className="trace-code is-indent">
+                    <code>{tr(lang, '迭代轮数')}</code>
+                    <span>{result.rounds}</span>
+                  </div>
+                ) : null}
+              </>
+            )}
           </div>
         </li>
 
-        <li className={`trace-stage ${phase === 'done' || phase === 'fail' ? 'is-active' : ''}`}>
+        <li className={`trace-stage ${done ? 'is-active' : ''}`}>
           <span className="trace-node">03</span>
           <div className="trace-body">
             <div className="trace-stage-head">
@@ -433,11 +355,15 @@ export function FlowPanel({
             {success ? (
               <>
                 <div className="trace-code">
-                  <code>return reconstruct(parent, n_goal)</code>
+                  <code>{isGraph ? 'return reconstruct(parent, n_goal)' : trace?.terminate[0]}</code>
                   <span className="trace-chip is-yes">{tr(lang, '命中终点')}</span>
                 </div>
                 <div className="trace-code is-indent">
-                  <code>{lang === 'en' ? `${result.rawPath.length} grid points · open ${result.openAtEnd}` : `${result.rawPath.length} 个栅格点 · open 剩余 ${result.openAtEnd}`}</code>
+                  <code>
+                    {lang === 'en'
+                      ? `${result.rawPath.length} points · open ${result.openAtEnd}`
+                      : `${result.rawPath.length} 个路径点 · open 剩余 ${result.openAtEnd}`}
+                  </code>
                   <span>{fmt(result.pathLength * map.cellSize)} m</span>
                 </div>
               </>
@@ -450,7 +376,11 @@ export function FlowPanel({
                   </span>
                 </div>
                 <div className="trace-code is-indent">
-                  <code>{lang === 'en' ? `expanded = ${fmtNum(lang, result.expanded)} · events retained` : `expanded = ${fmtNum(lang, result.expanded)} · 保留搜索事件`}</code>
+                  <code>
+                    {lang === 'en'
+                      ? `expanded = ${fmtNum(lang, result.expanded)} · events retained`
+                      : `expanded = ${fmtNum(lang, result.expanded)} · 保留搜索事件`}
+                  </code>
                   <span>infeasible</span>
                 </div>
               </>
@@ -494,7 +424,9 @@ export function FlowPanel({
                     ))}
                   </div>
                 ) : (
-                  <p className="trace-empty">{tr(lang, '没有启用的后处理器，直接输出搜索路径。')}</p>
+                  <p className="trace-empty">
+                    {tr(lang, '没有启用的后处理器，直接输出搜索路径。')}
+                  </p>
                 )}
               </>
             ) : (
@@ -521,17 +453,19 @@ export function FlowPanel({
               </div>
               <div>
                 <span>{tr(lang, '最小间隙')}</span>
-                <strong>{success ? `${fmt(result.minClearance * map.cellSize)} m` : '—'}</strong>
+                <strong>
+                  {success ? `${fmt(result.minClearance * map.cellSize)} m` : '—'}
+                </strong>
               </div>
               <div>
                 <span>{tr(lang, '求解')}</span>
                 <strong>{fmt(result.solveTime, 1)} ms</strong>
               </div>
             </div>
+            {result.note ? <p className="trace-note">{result.note}</p> : null}
           </div>
         </li>
       </ol>
-      )}
 
       <div className="flow-section-label">
         <span>{tr(lang, '开放集规模')}</span>

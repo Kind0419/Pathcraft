@@ -1,7 +1,7 @@
 {
   "name": "pathcraft",
-  "version": "0.5.1",
-  "description": "Composable 2D path-planning workbench with live execution traces, draggable algorithm recipes and A*, Dijkstra, Greedy, BFS, DFS.",
+  "version": "0.6.0",
+  "description": "Composable 2D/3D path-planning workbench with live execution traces and 17 algorithms, from A* and JPS to RRT*, ant colony and a worker/server solver runtime.",
   "license": "MIT",
   "type": "module",
   "scripts": {
@@ -9,7 +9,7 @@
     "typecheck": "tsc --noEmit",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview --host 127.0.0.1",
-    "bundle": "node scripts/package.mjs"
+    "bundle": "vite build --config vite.bundle.config.ts && node scripts/package.mjs --classic"
   },
   "dependencies": {
     "react": "^19.3.1",
@@ -46,7 +46,14 @@
     "pathfinding",
     "visualization",
     "runtime-trace",
-    "algorithm-visualization"
+    "algorithm-visualization",
+    "jps",
+    "d-star-lite",
+    "ida-star",
+    "rrt-star",
+    "ant-colony",
+    "genetic-algorithm",
+    "voxel"
   ],
   "engines": {
     "node": ">=22.12.0"

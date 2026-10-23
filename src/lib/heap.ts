@@ -7,6 +7,11 @@ export class MinHeap<T> {
     return this.items.length
   }
 
+  /** Smallest item without removing it, or `undefined` when empty. */
+  peek(): T | undefined {
+    return this.items[0]
+  }
+
   push(item: T): void {
     const items = this.items
     items.push(item)

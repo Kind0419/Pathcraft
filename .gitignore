@@ -12,3 +12,6 @@ coverage/
 .env
 .env.*
 !.env.example
+tsconfig.tsbuildinfo
+dist-bundle/
+.workbuddy/

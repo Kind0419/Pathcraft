@@ -13,6 +13,8 @@ interface CanvasViewProps {
   ghostContinuous: boolean
   hoverCard: CardId | null
   showExpanded: boolean
+  /** Off for solvers that iterate instead of expanding a frontier (ACO / GA). */
+  showTrail?: boolean
   showPath: boolean
   showGhost: boolean
   editMode: EditMode
@@ -172,6 +174,7 @@ export function CanvasView({
   ghostContinuous,
   hoverCard,
   showExpanded,
+  showTrail = true,
   showPath,
   showGhost,
   editMode,
@@ -478,50 +481,138 @@ export function CanvasView({
       }
     }
 
-    // Obstacles.
-    for (let y = 0; y < map.height; y += 1) {
-      for (let x = 0; x < map.width; x += 1) {
-        if (map.cells[y * map.width + x] !== 1) continue
-        const px = ox + x * cell
-        const py = oy + y * cell
-        ctx.fillStyle = '#333a33'
-        roundRect(ctx, px + 0.6, py + 0.6, cell - 1.2, cell - 1.2, Math.max(1, cell * 0.16))
-        ctx.fill()
-        ctx.strokeStyle = 'rgba(255, 255, 255, 0.06)'
-        ctx.lineWidth = 1
-        ctx.stroke()
+    // Algorithm field (pheromone for ACO). Drawn under the obstacles so walls
+    // stay readable, and only while the search layer is on.
+    //
+    // The field is rendered at one pixel per cell into an offscreen canvas and
+    // then scaled up with smoothing. Filling every cell rect instead produced
+    // visible square blocks — at 44×28 the field looked like extra obstacles
+    // rather than a gradient, which is the opposite of what it means.
+    if (result.field && showExpanded) {
+      const field = result.field
+      const max = Math.max(field.max, 1e-6)
+      const tile = document.createElement('canvas')
+      tile.width = field.width
+      tile.height = field.height
+      const tileCtx = tile.getContext('2d')
+      if (tileCtx) {
+        const image = tileCtx.createImageData(field.width, field.height)
+        for (let y = 0; y < field.height; y += 1) {
+          for (let x = 0; x < field.width; x += 1) {
+            const index = y * field.width + x
+            const strength = Math.min(1, field.values[index] / max)
+            // ^0.7 lifts the mid field so the corridor is visible at all;
+            // a pure square left nothing on screen but the path itself.
+            const alpha =
+              map.cells[index] === 1 || strength <= 0.02
+                ? 0
+                : Math.min(0.6, 0.07 + 0.55 * Math.pow(strength, 0.7))
+            const at = index * 4
+            image.data[at] = 164
+            image.data[at + 1] = 95
+            image.data[at + 2] = 67
+            image.data[at + 3] = Math.round(alpha * 255)
+          }
+        }
+        tileCtx.putImageData(image, 0, 0)
+        ctx.save()
+        ctx.imageSmoothingEnabled = true
+        ctx.imageSmoothingQuality = 'high'
+        ctx.drawImage(tile, ox, oy, map.width * cell, map.height * cell)
+        ctx.restore()
       }
     }
 
-    // Expanded nodes. Once the replay finishes, the trail steps back so the
-    // final path stays the focus.
-    if (showExpanded) {
-      const completed = visibleEvents >= eventCount
-      for (let i = 0; i < visibleEvents; i += 1) {
-        const event = result.events[i]
-        const progress = (i + 1) / Math.max(1, visibleEvents)
-        const alpha = completed ? 0.19 : 0.15 + progress * 0.25
-        const inset = cell * 0.25
-        ctx.fillStyle = `rgba(55, 82, 70, ${alpha})`
-        if (result.continuous) {
-          ctx.beginPath()
-          ctx.arc(
-            ox + event.x * cell,
-            oy + event.y * cell,
-            Math.max(1.2, cell * 0.09),
-            0,
-            Math.PI * 2,
-          )
-          ctx.fill()
-        } else {
-          ctx.fillRect(
-            ox + event.x * cell + inset,
-            oy + event.y * cell + inset,
-            cell - inset * 2,
-            cell - inset * 2,
-          )
-        }
+    // Obstacles.
+    //
+    // Drawn as one continuous mass, not a tray of rounded tiles: the outer wall
+    // is structural, so it steps back, while interior obstacles keep the full
+    // ink. Cell gaps stay under a pixel so a wall reads as a wall at 100% and
+    // still breaks into cells when you zoom in.
+    for (let y = 0; y < map.height; y += 1) {
+      for (let x = 0; x < map.width; x += 1) {
+        if (map.cells[y * map.width + x] !== 1) continue
+        const border =
+          x === 0 || y === 0 || x === map.width - 1 || y === map.height - 1
+        const px = ox + x * cell
+        const py = oy + y * cell
+        ctx.fillStyle = border ? '#5d6459' : '#3a4038'
+        roundRect(ctx, px + 0.4, py + 0.4, cell - 0.8, cell - 0.8, Math.max(0.5, cell * 0.1))
+        ctx.fill()
       }
+    }
+
+    // Expanded nodes.
+    //
+    // Rendered as inset cells, not a full-cell wash: the search is a sequence of
+    // discrete steps and the dots say that, while a wash reads as a shaded
+    // region. What made the first version of this noisy was drawing every node
+    // with its own fillStyle — the eye got three thousand slightly different
+    // greens. Now the trail is quantised into a handful of alpha steps and each
+    // step is filled as one path, so the only variation left is the one that
+    // carries meaning: older nodes fade, the wavefront stays bright.
+    if (showExpanded && showTrail) {
+      const completed = visibleEvents >= eventCount
+      const steps = 6
+      const buckets: number[][] = Array.from({ length: steps }, () => [])
+
+      for (let i = 0; i < visibleEvents; i += 1) {
+        // Order is the only thing the trail is really saying — this cell was
+        // reached before that one. Keeping the same six steps after the replay
+        // ends (just at a lower level) means the finished frame still shows
+        // which ground the search covered first instead of turning into an
+        // even dot grid.
+        const level = Math.min(
+          steps - 1,
+          Math.floor(((i + 1) / Math.max(1, visibleEvents)) * steps),
+        )
+        buckets[level].push(i)
+      }
+
+      // Slightly finer than the original half-cell block: same dot language,
+      // less ink, so a fully explored board stays quiet behind the path.
+      const inset = cell * 0.28
+      const size = Math.max(1, cell - inset * 2)
+      // A hair of corner rounding keeps the trail from reading as graph paper
+      // without turning the dots into blobs.
+      const radius = Math.min(size * 0.22, cell * 0.14)
+      const dot = !result.continuous && size >= 4 && typeof ctx.roundRect === 'function'
+      // Completed replay steps the whole trail back to the original weight so
+      // the path stays the focal element; during replay the wavefront is allowed
+      // to be much stronger, which is what makes the search visible as motion.
+      const low = completed ? 0.17 : 0.14
+      const high = completed ? 0.17 : 0.4
+
+      ctx.save()
+      for (let level = 0; level < steps; level += 1) {
+        const bucket = buckets[level]
+        if (bucket.length === 0) continue
+        const alpha = low + (level / (steps - 1)) * (high - low)
+        ctx.fillStyle = `rgba(52, 78, 66, ${alpha})`
+        ctx.beginPath()
+        if (result.continuous) {
+          for (const i of bucket) {
+            const event = result.events[i]
+            const cx = ox + event.x * cell
+            const cy = oy + event.y * cell
+            const r = Math.max(1.1, cell * 0.09)
+            // moveTo before every arc, otherwise each circle is joined to the
+            // previous one by a stray chord.
+            ctx.moveTo(cx + r, cy)
+            ctx.arc(cx, cy, r, 0, Math.PI * 2)
+          }
+        } else {
+          for (const i of bucket) {
+            const event = result.events[i]
+            const px = ox + event.x * cell + inset
+            const py = oy + event.y * cell + inset
+            if (dot) ctx.roundRect(px, py, size, size, radius)
+            else ctx.rect(px, py, size, size)
+          }
+        }
+        ctx.fill()
+      }
+      ctx.restore()
     }
 
     // Growing route. During replay the final path is drawn only as far as the
