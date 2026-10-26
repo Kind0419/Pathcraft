@@ -37,6 +37,8 @@ export type IconName =
   | 'sliders'
   | 'target'
   | 'route'
+  | 'moon'
+  | 'sun'
 
 interface IconProps extends Omit<SVGProps<SVGSVGElement>, 'name'> {
   name: IconName
@@ -326,6 +328,19 @@ export function Icon({ name, size = 16, strokeWidth = 1.8, ...props }: IconProps
           <circle cx="12" cy="12" r="7.5" />
           <circle cx="12" cy="12" r="2.5" />
           <path d="M12 2v3M12 19v3M2 12h3M19 12h3" />
+        </svg>
+      )
+    case 'moon':
+      return (
+        <svg {...common}>
+          <path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5Z" />
+        </svg>
+      )
+    case 'sun':
+      return (
+        <svg {...common}>
+          <circle cx="12" cy="12" r="4" />
+          <path d="M12 2v2M12 20v2M2 12h2M20 12h2M5 5l1.5 1.5M17.5 17.5 19 19M19 5l-1.5 1.5M6.5 17.5 5 19" />
         </svg>
       )
     case 'route':

@@ -30,6 +30,7 @@ import type { PlanResult } from '../lib/types'
 import type { Primitive, Vec3 } from '../lib/core/space'
 import type { World } from '../lib/worlds'
 import { tr, useLang } from '../lib/i18n'
+import { CANVAS, type CanvasPalette, useTheme } from '../lib/theme'
 
 interface Props {
   world: World
@@ -73,8 +74,6 @@ const TAU = Math.PI * 2
  * on, no height to the blocks, nothing for the route to sit *above*. Ground is
  * lighter and warmer than anything standing on it.
  */
-const MATERIAL = '#7d867d'
-
 /** Blend a hex toward black (factor < 1) or white (factor > 1). */
 function toneOf(hex: string, factor: number): string {
   const c = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16))
@@ -93,30 +92,77 @@ function toneOf(hex: string, factor: number): string {
  * is legible without a single outline stroke — outlines on one-metre voxels
  * read as tiling, which is exactly what this view must not look like.
  */
-const FLOOR = '#bdbdb0'
-const WALL_TOP = toneOf(MATERIAL, 1.3)
-const WALL_SIDE_A = toneOf(MATERIAL, 0.86)
-const WALL_SIDE_B = toneOf(MATERIAL, 0.68)
+/* Mutable, because the scene has two themes and the draw pass reads them at
+ * frame time. `applyPalette` is called once per render from the component; the
+ * draw effect depends on the theme, so a switch repaints with the new values. */
+let FLOOR = CANVAS.light.floor
+let WALL_TOP = CANVAS.light.wallTop
+let WALL_SIDE_A = CANVAS.light.wallSideA
+let WALL_SIDE_B = CANVAS.light.wallSideB
+let WALL_RIM = CANVAS.light.wallRim
+let MATERIAL = CANVAS.light.wallSideA
 
-const PAPER_TOP = '#fcfbf6'
-const PAPER_MID = '#f7f4ea'
-const PAPER_LOW = '#eeebe0'
-const PLATE = '#e2ded0'
-const PLATE_EDGE = 'rgba(96, 104, 92, 0.16)'
+let PAPER_TOP = CANVAS.light.stageTop
+let PAPER_MID = CANVAS.light.stageMid
+let PAPER_LOW = CANVAS.light.stageLow
+let KEY_LIGHT = CANVAS.light.keyLight
+let KEY_LIGHT_MID = CANVAS.light.keyLightMid
+let PLATE = CANVAS.light.plate
+let PLATE_EDGE = CANVAS.light.plateEdge
+let SHADOW_TINT = CANVAS.light.shadow
+let POOL = CANVAS.light.pool
 
 // The path is the one element that must survive every background: it crosses the
 // pale floor, then a wall's top face, then a wall's shaded side. A single flat
 // colour cannot do that — pine on the walls goes to near-black. So the route is
 // drawn as a light ribbon with a dark underlay, which reads on all three.
-const PATH = '#f8f2e2'
-const PATH_LOW = '#c3dccb'
-const PATH_HIGH = '#eeb478'
-const PATH_HALO = 'rgba(24, 33, 27, 0.72)'
-const START = '#2f5d50'
-const GOAL = '#a45f43'
-const START_GLOW = 'rgba(47, 93, 80, 0.20)'
-const GOAL_GLOW = 'rgba(164, 95, 67, 0.20)'
-const TRAIL = '46, 72, 60'
+let PATH = CANVAS.light.route
+let PATH_LOW = CANVAS.light.routeLow
+let PATH_HIGH = CANVAS.light.routeHigh
+let PATH_HALO = CANVAS.light.routeHalo
+let START = CANVAS.light.start
+let GOAL = CANVAS.light.goal
+let START_GLOW = CANVAS.light.startGlow
+let GOAL_GLOW = CANVAS.light.goalGlow
+let TRAIL = CANVAS.light.trail.join(', ')
+let ROUTE_GLOW = CANVAS.light.routeGlow
+
+/**
+ * Point every surface at one palette.
+ *
+ * The 3D pass has thirty-odd colour constants and one draw path. Rather than
+ * thread a palette through every closure, the constants are module-level and
+ * reassigned here; the draw effect lists `theme` as a dependency, so a switch
+ * repaints with the new set. One scene instance exists at a time, so this is
+ * safe as well as cheap.
+ */
+function applyPalette(p: CanvasPalette): void {
+  FLOOR = p.floor
+  WALL_TOP = p.wallTop
+  WALL_SIDE_A = p.wallSideA
+  WALL_SIDE_B = p.wallSideB
+  WALL_RIM = p.wallRim
+  MATERIAL = p.wallSideA
+  PAPER_TOP = p.stageTop
+  PAPER_MID = p.stageMid
+  PAPER_LOW = p.stageLow
+  KEY_LIGHT = p.keyLight
+  KEY_LIGHT_MID = p.keyLightMid
+  PLATE = p.plate
+  PLATE_EDGE = p.plateEdge
+  SHADOW_TINT = p.shadow
+  POOL = p.pool
+  PATH = p.route
+  PATH_LOW = p.routeLow
+  PATH_HIGH = p.routeHigh
+  PATH_HALO = p.routeHalo
+  START = p.start
+  GOAL = p.goal
+  START_GLOW = p.startGlow
+  GOAL_GLOW = p.goalGlow
+  TRAIL = p.trail.join(', ')
+  ROUTE_GLOW = p.routeGlow
+}
 
 const HOME_VIEW = { yaw: -0.66, pitch: 0.86, zoom: 1 }
 const PITCH_MIN = 0.16
@@ -144,6 +190,11 @@ function mix(a: string, b: string, t: number): string {
   return `rgb(${at(0)}, ${at(1)}, ${at(2)})`
 }
 
+/** `#rrggbb` -> channels, for shading maths that has to stay numeric. */
+function rgbTuple(hex: string): [number, number, number] {
+  return [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16)) as [number, number, number]
+}
+
 const clamp = (value: number, low: number, high: number) => Math.max(low, Math.min(high, value))
 
 /**
@@ -154,6 +205,18 @@ const clamp = (value: number, low: number, high: number) => Math.max(low, Math.m
  * slightly away from the cursor, and that symptom — "the scene is wrong" — is
  * nowhere near its cause. So it lives in one function, called from both places.
  */
+/**
+ * Vertical exaggeration.
+ *
+ * The voxel volumes are one cell tall. At true isometric proportion a one-cell
+ * wall shows its top face as a sliver, so a room reads as cardboard cut-outs
+ * standing on a plate -- which is most of what "looks like a CAD screenshot"
+ * meant. Real isometric art cheats this: stretch the z axis and the same cells
+ * become walls with a readable top, a readable side, and a shadow between them.
+ * 1.55 is enough to give the volume a face without tipping into "tall building".
+ */
+const Z_LIFT = 1.22
+
 function fitView(bounds: Bounds, width: number, height: number, yaw: number, pitch: number, zoom: number) {
   const cy = Math.cos(yaw)
   const sy = Math.sin(yaw)
@@ -169,7 +232,7 @@ function fitView(bounds: Bounds, width: number, height: number, yaw: number, pit
     const z = i & 4 ? bounds.max.z : bounds.min.z
     const px = x * cy + y * sy
     const ry = -x * sy + y * cy
-    const py = -(ry * sp + z * cp)
+    const py = -(ry * sp + z * Z_LIFT * cp)
     if (px < minX) minX = px
     if (px > maxX) maxX = px
     if (py < minY) minY = py
@@ -228,10 +291,11 @@ type Frame = ReturnType<typeof fitView>
 function projectIn(frame: Frame, p: Vec3) {
   const rx = p.x * frame.cy + p.y * frame.sy
   const ry = -p.x * frame.sy + p.y * frame.cy
+  const z = p.z * Z_LIFT
   return {
     x: frame.originX + rx * frame.scale,
-    y: frame.originY - (ry * frame.sp + p.z * frame.cp) * frame.scale,
-    depth: ry * frame.cp - p.z * frame.sp,
+    y: frame.originY - (ry * frame.sp + z * frame.cp) * frame.scale,
+    depth: ry * frame.cp - z * frame.sp,
   }
 }
 
@@ -286,7 +350,10 @@ function buildFaces(cells: Uint8Array, width: number, height: number, depth: num
       // "this is lit differently" and over the threshold of "these are two
       // floors".
       const fill =
-        shade === 3 ? FLOOR : shade === 0 ? toneOf(MATERIAL, 1.2 + 0.26 * (z / Math.max(1, depth - 1))) : WALL_SIDE_B
+        // No altitude tint any more: the palette gives the top its own value and
+        // the side faces carry a vertical light falloff, so levels separate without
+        // a second derived colour that the palettes cannot express.
+        shade === 3 ? FLOOR : shade === 0 ? WALL_TOP : WALL_SIDE_B
       for (let y = 0; y < height; y += 1) {
         runs(
           width,
@@ -394,6 +461,10 @@ export function Scene3D({
   onPick,
 }: Props) {
   const lang = useLang()
+  const theme = useTheme()
+  // The palette has to be installed before the draw effect runs, and the effect
+  // lists `theme` so a switch repaints. useMemo keeps it ordered with render.
+  useMemo(() => applyPalette(CANVAS[theme]), [theme])
   const hostRef = useRef<HTMLDivElement | null>(null)
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const [size, setSize] = useState({ width: 0, height: 0 })
@@ -471,7 +542,10 @@ export function Scene3D({
       dim: space.dim,
       pickZ: space.bounds.min.z,
     }
-  }, [world])
+    // `theme` belongs here: buildFaces bakes each face's resolved fill, so a
+    // theme switch has to rebuild the geometry or the walls keep the old
+    // palette while the backdrop changes under them.
+  }, [world, theme])
 
   /**
    * One entry per occupied column, for the contact shadows.
@@ -707,9 +781,11 @@ export function Scene3D({
     ctx.fillRect(0, 0, width, height)
 
     const key = ctx.createRadialGradient(width * 0.42, height * 0.26, 0, width * 0.42, height * 0.26, Math.max(width, height) * 0.72)
-    key.addColorStop(0, 'rgba(255, 255, 255, 0.62)')
-    key.addColorStop(0.55, 'rgba(255, 255, 255, 0.16)')
-    key.addColorStop(1, 'rgba(255, 255, 255, 0)')
+    // Warm key, not white: a white wash over a dark room turns the set into fog.
+    // The lamp colour lives in the palette so each theme lights with its own source.
+    key.addColorStop(0, KEY_LIGHT)
+    key.addColorStop(0.55, KEY_LIGHT_MID)
+    key.addColorStop(1, 'rgba(255, 214, 160, 0)')
     ctx.fillStyle = key
     ctx.fillRect(0, 0, width, height)
 
@@ -740,6 +816,39 @@ export function Scene3D({
         c.stroke()
       },
     })
+
+    /* Pool of light.
+     *
+     * A dark stage needs somewhere for the eye to land. One soft radial ellipse
+     * on the floor, drawn just above the plate and below everything standing on
+     * it, reads as a lamp over the model -- which is the whole difference between
+     * "a dark render" and "a lit room". */
+    {
+      const mid = projectPoint({
+        x: (bounds.min.x + bounds.max.x) / 2,
+        y: (bounds.min.y + bounds.max.y) / 2,
+        z: floorZ,
+      })
+      const rx = (bounds.max.x - bounds.min.x) * scale * 0.52
+      const ry = rx * frame.sp
+      items.push({
+        depth: Number.MAX_SAFE_INTEGER - 1,
+        draw: (c) => {
+          const g = c.createRadialGradient(mid.x, mid.y, 0, mid.x, mid.y, Math.max(rx, ry))
+          g.addColorStop(0, POOL)
+          g.addColorStop(1, 'rgba(255, 214, 160, 0)')
+          c.save()
+          c.translate(mid.x, mid.y)
+          c.scale(1, Math.max(0.15, ry / Math.max(1, rx)))
+          c.translate(-mid.x, -mid.y)
+          c.fillStyle = g
+          c.beginPath()
+          c.arc(mid.x, mid.y, Math.max(rx, ry), 0, TAU)
+          c.fill()
+          c.restore()
+        },
+      })
+    }
 
     /* Ground grid. Drawn as items (not as a backdrop pass) so it lands on the
        floor and is still occluded by the walls standing on that floor — a
@@ -784,7 +893,7 @@ export function Scene3D({
       items.push({
         depth: centre.depth - 0.015,
         draw: (c) => {
-          c.fillStyle = 'rgba(40, 48, 41, 0.105)'
+          c.fillStyle = SHADOW_TINT
           c.beginPath()
           for (const col of columns) {
             const p = projectPoint({ x: col.x, y: col.y, z: floorZ })
@@ -835,7 +944,7 @@ export function Scene3D({
         items.push({
           depth: centre.depth - 0.014,
           draw: (c) => {
-            c.fillStyle = 'rgba(40, 48, 41, 0.1)'
+            c.fillStyle = SHADOW_TINT
             for (const shadow of shadows) {
               c.beginPath()
               if (shadow.kind === 'ellipse') {
@@ -854,6 +963,41 @@ export function Scene3D({
 
     /* Voxel walls: only faces turned toward the camera. */
     const towardCamera = { x: frame.sy * frame.cp, y: -frame.cy * frame.cp, z: frame.sp }
+
+    /* The wall material.
+     *
+     * Flat fill was the tell. `wallSideA` is one value, so every side face in the
+     * scene was the same colour whatever its height, and a voxel room read as
+     * painted cardboard -- no surface, no weight, no contact with the floor.
+     *
+     * What a side face needs is the value at *z*, not at the face: bright at the
+     * top edge where the key grazes it, falling off down the wall, and dropping
+     * hard in the last half cell where the floor stops bouncing anything. That
+     * is one function, so two stacked faces evaluate to the same colour where
+     * they meet and the wall reads as one surface -- which is exactly what went
+     * wrong the first time this was tried with a gradient per face: the ramp
+     * restarted inside every voxel level and the wall came out striped like a
+     * ladder. Here each face carries only the *slice* of the ramp it covers.
+     */
+    const zTop = Math.max(2, bounds.max.z)
+    const toneCache = new Map<number, string>()
+    const wallAt = (shade: 1 | 2, z: number): string => {
+      const h = clamp(z, 0, zTop)
+      const key = Math.round(shade * 1000 + h * 8)
+      const hit = toneCache.get(key)
+      if (hit) return hit
+      const base = rgbTuple(shade === 1 ? WALL_SIDE_A : WALL_SIDE_B)
+      const lit = rgbTuple(WALL_TOP)
+      const lift = 0.92 * Math.pow(h / zTop, 0.68)
+      // Contact shadow: strongest at the floor, gone by the second cell.
+      const ao = 0.56 * Math.exp(-h / 1.25)
+      const css = `rgb(${base
+        .map((v, i) => Math.round(clamp((v + (lit[i] - v) * lift) * (1 - ao), 0, 255)))
+        .join(', ')})`
+      toneCache.set(key, css)
+      return css
+    }
+
     for (const face of geometry.faces) {
       const dot = face.nx * towardCamera.x + face.ny * towardCamera.y + face.nz * towardCamera.z
       if (dot <= 0.001) continue
@@ -861,14 +1005,40 @@ export function Scene3D({
       let depth = 0
       for (const p of raw) depth += p.depth
       depth /= raw.length
-      const fill = face.fill
       const pts = expandQuad(raw, 0.4)
+      const vertical = face.nz === 0 && face.shade !== 3
+      // Span of the face along z -- the axis the ramp runs down.
+      let z0 = face.corners[0].z
+      let z1 = z0
+      for (const corner of face.corners) {
+        if (corner.z < z0) z0 = corner.z
+        if (corner.z > z1) z1 = corner.z
+      }
+      const fill = face.fill
+      const lo = vertical ? wallAt(face.shade as 1 | 2, z0) : fill
+      const hi = vertical ? wallAt(face.shade as 1 | 2, z1) : fill
+      // Anchor the ramp at the middle of the face's lower edge. Only z differs
+      // between the two anchors, so the gradient axis is world-vertical on
+      // screen -- the direction the light actually falls.
+      const midX = (face.corners[0].x + face.corners[1].x) / 2
+      const midY = (face.corners[0].y + face.corners[1].y) / 2
+      const pLo = vertical ? projectPoint({ x: midX, y: midY, z: z0 }) : null
+      const pHi = vertical ? projectPoint({ x: midX, y: midY, z: z1 }) : null
       items.push({
         depth,
         draw: (c) => {
-          c.fillStyle = fill
-          c.strokeStyle = fill
-          c.lineWidth = 1.6
+          let paint: string | CanvasGradient = fill
+          if (vertical && pLo && pHi && z1 - z0 > 0.01 && Math.abs(pHi.y - pLo.y) > 2) {
+            const ramp = c.createLinearGradient(pLo.x, pLo.y, pHi.x, pHi.y)
+            ramp.addColorStop(0, lo)
+            ramp.addColorStop(1, hi)
+            paint = ramp
+          } else if (vertical) {
+            paint = lo
+          }
+          c.fillStyle = paint
+          c.strokeStyle = paint
+          c.lineWidth = 2.6
           c.beginPath()
           c.moveTo(pts[0].x, pts[0].y)
           for (let i = 1; i < pts.length; i += 1) c.lineTo(pts[i].x, pts[i].y)
@@ -879,6 +1049,22 @@ export function Scene3D({
           // leaving a hairline of page colour. On a wall it is invisible; on a
           // floor of twenty strips it reads as ruled lines.
           c.stroke()
+          // The turn-over at the top of a wall. One thin line is the difference
+          // between a column and a silhouette: it is the edge the key grazes,
+          // and the only place in the scene where the light reads as a line
+          // rather than as a value. Skipped on faces too short to hold it --
+          // below about six pixels it is a smudge, not an edge.
+          if (vertical) {
+            const hgt = Math.hypot(pts[2].x - pts[3].x, pts[2].y - pts[3].y)
+            if (hgt > 7) {
+              c.strokeStyle = WALL_RIM
+              c.lineWidth = 1.3
+              c.beginPath()
+              c.moveTo(pts[3].x, pts[3].y)
+              c.lineTo(pts[2].x, pts[2].y)
+              c.stroke()
+            }
+          }
         },
       })
     }
@@ -993,7 +1179,11 @@ export function Scene3D({
       if (primitive.kind === 'box3') {
         const { min, max } = primitive
         // Six faces, same rules as voxels: only the camera-facing ones.
-        const faces: Array<{ n: Vec3; c: Vec3[]; shade: 0 | 1 | 2 }> = [
+        // `shade` keeps the same 0/1/2/3 vocabulary as `Face` below (3 = floor)
+        // even though a box never emits its underside; narrowing it to 0/1/2
+        // made the `!== 3` guard below a comparison TypeScript could prove
+        // impossible, which is a build error, not a harmless redundancy.
+        const faces: Array<{ n: Vec3; c: Vec3[]; shade: 0 | 1 | 2 | 3 }> = [
           { n: { x: 0, y: 0, z: 1 }, c: [
             { x: min.x, y: min.y, z: max.z },
             { x: max.x, y: min.y, z: max.z },
@@ -1037,20 +1227,56 @@ export function Scene3D({
           const raw = face.c.map(projectPoint)
           let depth = 0
           for (const p of raw) depth += p.depth
-          const fill = shadeFill(face.shade)
           const pts = expandQuad(raw, 0.4)
+          const vertical = face.n.z === 0 && face.shade !== 3
+          let z0 = face.c[0].z
+          let z1 = z0
+          for (const corner of face.c) {
+            if (corner.z < z0) z0 = corner.z
+            if (corner.z > z1) z1 = corner.z
+          }
+          const fill = shadeFill(face.shade)
+          const lo = vertical ? wallAt(face.shade as 1 | 2, z0) : fill
+          const hi = vertical ? wallAt(face.shade as 1 | 2, z1) : fill
+          // A box face covers a whole wall, so unlike the voxel path it can
+          // carry the full height ramp in one gradient. Anchor at the middle
+          // of its lower edge; only z changes between the two anchors.
+          const midX = (face.c[0].x + face.c[1].x) / 2
+          const midY = (face.c[0].y + face.c[1].y) / 2
+          const pLo = vertical ? projectPoint({ x: midX, y: midY, z: z0 }) : null
+          const pHi = vertical ? projectPoint({ x: midX, y: midY, z: z1 }) : null
           items.push({
             depth: depth / 4,
             draw: (c) => {
-              c.fillStyle = fill
-              c.strokeStyle = fill
-              c.lineWidth = 1.6
+              let paint: string | CanvasGradient = fill
+              if (vertical && pLo && pHi && z1 - z0 > 0.01 && Math.abs(pHi.y - pLo.y) > 2) {
+                const ramp = c.createLinearGradient(pLo.x, pLo.y, pHi.x, pHi.y)
+                ramp.addColorStop(0, lo)
+                ramp.addColorStop(1, hi)
+                paint = ramp
+              } else if (vertical) {
+                paint = lo
+              }
+              c.fillStyle = paint
+              c.strokeStyle = paint
+              c.lineWidth = 2.6
               c.beginPath()
               c.moveTo(pts[0].x, pts[0].y)
               for (let i = 1; i < pts.length; i += 1) c.lineTo(pts[i].x, pts[i].y)
               c.closePath()
               c.fill()
               c.stroke()
+              if (vertical) {
+                const hgt = Math.hypot(pts[2].x - pts[3].x, pts[2].y - pts[3].y)
+                if (hgt > 7) {
+                  c.strokeStyle = WALL_RIM
+                  c.lineWidth = 1.3
+                  c.beginPath()
+                  c.moveTo(pts[3].x, pts[3].y)
+                  c.lineTo(pts[2].x, pts[2].y)
+                  c.stroke()
+                }
+              }
             },
           })
         }
@@ -1156,21 +1382,62 @@ export function Scene3D({
 
       const pts = path3.slice(0, grown).map(projectPoint)
       route = pts
-      routeWidth = Math.max(3, scale * 0.21)
+      routeWidth = Math.max(5, scale * 0.42)
+
+      // The pale keyline used to be stroked per segment, round caps and all, so
+      // every joint stacked two end-caps on top of each other and the route came
+      // out beaded -- bright knots at each turn, thicker than the line itself.
+      // One pass for the whole keyline, then the tinted segments butted inside it:
+      // a continuous ribbon instead of a chain.
+      if (pts.length > 1) {
+        let hd = 0
+        for (const q of pts) hd += q.depth
+        // Glow first: in the dark theme the route is a light source, so it gets a
+        // wide, low-alpha pass of its own colour underneath. In the light theme
+        // ROUTE_GLOW is transparent and this collapses to nothing.
+        items.push({
+          depth: hd / pts.length - 0.006,
+          draw: (c) => {
+            if (ROUTE_GLOW === 'transparent') return
+            c.strokeStyle = ROUTE_GLOW
+            c.lineWidth = routeWidth + 14
+            c.lineCap = 'round'
+            c.lineJoin = 'round'
+            c.beginPath()
+            c.moveTo(pts[0].x, pts[0].y)
+            for (let i = 1; i < pts.length; i += 1) c.lineTo(pts[i].x, pts[i].y)
+            c.stroke()
+          },
+        })
+        items.push({
+          depth: hd / pts.length - 0.004,
+          draw: (c) => {
+            c.strokeStyle = PATH_HALO
+            c.lineWidth = routeWidth + 2.4
+            c.lineCap = 'round'
+            c.lineJoin = 'round'
+            c.beginPath()
+            c.moveTo(pts[0].x, pts[0].y)
+            for (let i = 1; i < pts.length; i += 1) c.lineTo(pts[i].x, pts[i].y)
+            c.stroke()
+          },
+        })
+      }
+
       for (let i = 1; i < pts.length; i += 1) {
         const a = pts[i - 1]
         const b = pts[i]
         const tint = lift((path3[i].z + path3[i - 1].z) / 2)
+        const first = i === 1
+        const last = i === pts.length - 1
         items.push({
           depth: (a.depth + b.depth) / 2,
           draw: (c) => {
-            c.lineCap = 'round'
+            // butt ends inside the ribbon, round only at the two real endpoints
+            c.lineCap = first || last ? 'round' : 'butt'
             c.beginPath()
             c.moveTo(a.x, a.y)
             c.lineTo(b.x, b.y)
-            c.strokeStyle = PATH_HALO
-            c.lineWidth = routeWidth + 2
-            c.stroke()
             c.strokeStyle = tint
             c.lineWidth = routeWidth
             c.stroke()
@@ -1315,7 +1582,7 @@ export function Scene3D({
       ctx.strokeRect(1, 1, width - 2, height - 2)
       ctx.setLineDash([])
     }
-  }, [geometry, result, start, goal, playhead, showExpanded, showPath, pickMode, size, columns, trail, altitude])
+  }, [geometry, result, start, goal, playhead, showExpanded, showPath, pickMode, size, columns, trail, altitude, theme])
 
   useEffect(() => {
     drawRef.current = paint

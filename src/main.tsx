@@ -1,7 +1,12 @@
 import { Component, StrictMode, type ReactNode } from 'react'
 import { createRoot } from 'react-dom/client'
 import App from './App'
+import { initTheme } from './lib/theme'
 import './styles.css'
+
+// Before the first paint: the theme decides every surface colour, and mounting
+// light then flipping to dark shows as a flash of the wrong paper.
+initTheme()
 
 /**
  * Last-resort boundary.

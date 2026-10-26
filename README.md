@@ -5,9 +5,9 @@
 
 [中文](README.md) · [English](README.en.md)
 
-[Live Demo](https://Kind0419.github.io/Pathcraft/) · [GitHub](https://github.com/Kind0419/Pathcraft) · [MIT License](LICENSE)
+[Live Demo](https://Kind0419.github.io/Pathcraft/) · [GitHub](https://github.com/Kind0419/Pathcraft) · [更新日志](CHANGELOG.md) · [MIT License](LICENSE)
 
-> Status: `0.7.0` · 2D grid + continuous + 3D voxel / field · React + TypeScript + Canvas
+> Status: `0.8.0` · 2D grid + continuous + 3D voxel / field · light / dark · React + TypeScript + Canvas
 
 [![Pathcraft interactive demo](https://Kind0419.github.io/Pathcraft/preview.gif?v=4)](https://Kind0419.github.io/Pathcraft/)
 
@@ -54,6 +54,7 @@ Pathcraft 是一个运行在浏览器里的路径规划实验台：**2D 栅格**
 - 分享 URL、导出 JSON / CSV
 - 单文件离线版本
 - 中文 / English 切换
+- 深浅两套主题：顶栏一键切换，首次打开跟随系统偏好；画布与 3D 台面一起换色，不是把亮色反过来
 
 ### 执行轨迹
 

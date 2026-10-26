@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type WheelEvent as ReactWheelEvent } from 'react'
 import { tr, useLang } from '../lib/i18n'
+import { CANVAS, useTheme } from '../lib/theme'
 import type { CardId, CardsState, GridMap, PlanResult, Point } from '../lib/types'
 
 type EditMode = 'none' | 'start' | 'goal'
@@ -44,7 +45,7 @@ interface HoverCell {
 }
 
 function layoutFor(width: number, height: number, map: GridMap, zoom: number): Layout {
-  const pad = 16
+  const pad = 0
   const base = Math.min(
     Math.max(4, (width - pad * 2) / map.width),
     Math.max(4, (height - pad * 2) / map.height),
@@ -190,6 +191,8 @@ export function CanvasView({
   onZoom,
 }: CanvasViewProps) {
   const lang = useLang()
+  const theme = useTheme()
+  const C = CANVAS[theme]
   const wrapperRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const dragMarkerRef = useRef<'start' | 'goal' | null>(null)
@@ -369,7 +372,7 @@ export function CanvasView({
     if (!ctx) return
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
     draw(ctx, size.width, size.height)
-  }, [size, map, cards, result, playhead, ghostPath, hover, hoverCard, showExpanded, showPath, showGhost, layout, displayPath, mapEditMode, brushSize, editMode, markerView])
+  }, [size, map, cards, result, playhead, ghostPath, hover, hoverCard, showExpanded, showPath, showGhost, layout, displayPath, mapEditMode, brushSize, editMode, markerView, theme])
 
   function draw(ctx: CanvasRenderingContext2D, width: number, height: number) {
     const { cell, ox, oy } = layout
@@ -398,13 +401,13 @@ export function CanvasView({
       height * 0.5,
       Math.max(width, height) * 0.72,
     )
-    paper.addColorStop(0, '#fbfaf6')
-    paper.addColorStop(1, '#f3f0e7')
+    paper.addColorStop(0, C.paperTop)
+    paper.addColorStop(1, C.paperLow)
     ctx.fillStyle = paper
     ctx.fillRect(0, 0, width, height)
 
     // Paper grid.
-    ctx.strokeStyle = 'rgba(64, 68, 58, 0.05)'
+    ctx.strokeStyle = C.grid
     ctx.lineWidth = 1
     for (let x = 0; x <= map.width; x += 1) {
       const px = Math.round(ox + x * cell) + 0.5
@@ -421,7 +424,7 @@ export function CanvasView({
       ctx.stroke()
     }
 
-    ctx.strokeStyle = 'rgba(64, 68, 58, 0.10)'
+    ctx.strokeStyle = C.gridMajor
     ctx.lineWidth = 1
     roundRect(
       ctx,
@@ -525,20 +528,37 @@ export function CanvasView({
 
     // Obstacles.
     //
-    // Drawn as one continuous mass, not a tray of rounded tiles: the outer wall
-    // is structural, so it steps back, while interior obstacles keep the full
-    // ink. Cell gaps stay under a pixel so a wall reads as a wall at 100% and
-    // still breaks into cells when you zoom in.
+    // One continuous mass, drawn with no per-cell gap. The previous version inset
+    // every tile by 0.4 px "so a wall still breaks into cells", but at this cell
+    // size that 0.8 px gap is a bright hairline: a 6x6 block read as 36 tiles of
+    // lego rather than one piece of stone, and the whole board shimmered. Cells
+    // are now butted (plus a half-pixel overlap to kill antialiasing seams) and
+    // the grid is implied by the paper behind them, not cut into the mass.
+    ctx.fillStyle = C.wall
     for (let y = 0; y < map.height; y += 1) {
       for (let x = 0; x < map.width; x += 1) {
         if (map.cells[y * map.width + x] !== 1) continue
-        const border =
-          x === 0 || y === 0 || x === map.width - 1 || y === map.height - 1
-        const px = ox + x * cell
-        const py = oy + y * cell
-        ctx.fillStyle = border ? '#5d6459' : '#3a4038'
-        roundRect(ctx, px + 0.4, py + 0.4, cell - 0.8, cell - 0.8, Math.max(0.5, cell * 0.1))
-        ctx.fill()
+        // The outer ring is structural, not content: it exists so the search has
+        // a closed region, but drawing it puts a hard rectangle around the shot.
+        // Left unpainted the field simply runs off frame, which is what a screen
+        // recording of a work surface should do.
+        if (x === 0 || y === 0 || x === map.width - 1 || y === map.height - 1) continue
+        ctx.fillRect(ox + x * cell, oy + y * cell, cell + 1, cell + 1)
+      }
+    }
+
+    // A lit lip along the top of every wall run. One extra pass over the cells,
+    // and it is what turns a flat rectangle into a block with a top face -- the
+    // 2D answer to the shading the 3D view gets for free. Transparent in the
+    // light theme, where the walls are dark on paper and already read.
+    if (C.wallEdge !== 'rgba(255, 255, 255, 0)') {
+      ctx.fillStyle = C.wallEdge
+      for (let y = 0; y < map.height; y += 1) {
+        for (let x = 0; x < map.width; x += 1) {
+          if (map.cells[y * map.width + x] !== 1) continue
+          if (y > 0 && map.cells[(y - 1) * map.width + x] === 1) continue
+          ctx.fillRect(ox + x * cell, oy + y * cell, cell + 1, Math.max(1, cell * 0.08))
+        }
       }
     }
 
@@ -571,7 +591,7 @@ export function CanvasView({
 
       // Slightly finer than the original half-cell block: same dot language,
       // less ink, so a fully explored board stays quiet behind the path.
-      const inset = cell * 0.28
+      const inset = cell * 0.34
       const size = Math.max(1, cell - inset * 2)
       // A hair of corner rounding keeps the trail from reading as graph paper
       // without turning the dots into blobs.
@@ -580,15 +600,15 @@ export function CanvasView({
       // Completed replay steps the whole trail back to the original weight so
       // the path stays the focal element; during replay the wavefront is allowed
       // to be much stronger, which is what makes the search visible as motion.
-      const low = completed ? 0.17 : 0.14
-      const high = completed ? 0.17 : 0.4
+      const low = completed ? 0.10 : 0.09
+      const high = completed ? 0.10 : 0.28
 
       ctx.save()
       for (let level = 0; level < steps; level += 1) {
         const bucket = buckets[level]
         if (bucket.length === 0) continue
         const alpha = low + (level / (steps - 1)) * (high - low)
-        ctx.fillStyle = `rgba(52, 78, 66, ${alpha})`
+        ctx.fillStyle = `rgba(${C.trail.join(', ')}, ${alpha})`
         ctx.beginPath()
         if (result.continuous) {
           for (const i of bucket) {
@@ -629,13 +649,13 @@ export function CanvasView({
       })
       ctx.lineCap = 'round'
       ctx.lineJoin = 'round'
-      ctx.strokeStyle = 'rgba(255, 255, 255, 0.86)'
+      ctx.strokeStyle = C.pathEdge
       ctx.lineWidth = Math.max(6, cell * 0.46)
       ctx.stroke()
       ctx.save()
-      ctx.shadowColor = 'rgba(47, 93, 80, 0.22)'
+      ctx.shadowColor = C.pathGlow
       ctx.shadowBlur = Math.max(5, cell * 0.55)
-      ctx.strokeStyle = '#2f5d50'
+      ctx.strokeStyle = C.path
       ctx.lineWidth = Math.max(2.6, cell * 0.23)
       ctx.stroke()
       ctx.restore()
@@ -652,7 +672,7 @@ export function CanvasView({
             0,
             Math.PI * 2,
           )
-          ctx.fillStyle = '#2f5d50'
+          ctx.fillStyle = C.start
           ctx.fill()
         }
       }
@@ -666,9 +686,9 @@ export function CanvasView({
           0,
           Math.PI * 2,
         )
-        ctx.fillStyle = '#a45f43'
+        ctx.fillStyle = C.goal
         ctx.fill()
-        ctx.strokeStyle = 'rgba(255,255,255,0.92)'
+        ctx.strokeStyle = C.markerStroke
         ctx.lineWidth = 1.4
         ctx.stroke()
       }
@@ -685,9 +705,9 @@ export function CanvasView({
         0,
         Math.PI * 2,
       )
-      ctx.fillStyle = '#a45f43'
+      ctx.fillStyle = C.goal
       ctx.fill()
-      ctx.strokeStyle = 'rgba(255,255,255,0.9)'
+      ctx.strokeStyle = C.markerStroke
       ctx.lineWidth = 1.2
       ctx.stroke()
     }
@@ -703,7 +723,7 @@ export function CanvasView({
         else ctx.lineTo(px, py)
       })
       ctx.setLineDash([4, 5])
-      ctx.strokeStyle = 'rgba(110, 112, 102, 0.55)'
+      ctx.strokeStyle = C.ghost
       ctx.lineWidth = Math.max(1.2, cell * 0.075)
       ctx.lineCap = 'round'
       ctx.lineJoin = 'round'
@@ -923,7 +943,7 @@ export function CanvasView({
         0,
         Math.PI * 2,
       )
-      ctx.strokeStyle = 'rgba(47, 93, 80, 0.7)'
+      ctx.strokeStyle = C.start
       ctx.lineWidth = 1.5
       ctx.stroke()
     }
@@ -957,9 +977,9 @@ export function CanvasView({
     ctx.fill()
     ctx.beginPath()
     ctx.arc(startX, startY, markerRadius, 0, Math.PI * 2)
-    ctx.fillStyle = '#2f5d50'
+    ctx.fillStyle = C.start
     ctx.fill()
-    ctx.strokeStyle = '#ffffff'
+    ctx.strokeStyle = C.markerStroke
     ctx.lineWidth = 2
     ctx.stroke()
 
@@ -969,13 +989,13 @@ export function CanvasView({
     ctx.fill()
     ctx.beginPath()
     ctx.arc(goalX, goalY, markerRadius, 0, Math.PI * 2)
-    ctx.fillStyle = '#a45f43'
+    ctx.fillStyle = C.goal
     ctx.fill()
-    ctx.strokeStyle = '#ffffff'
+    ctx.strokeStyle = C.markerStroke
     ctx.lineWidth = 2
     ctx.stroke()
 
-    ctx.fillStyle = '#ffffff'
+    ctx.fillStyle = C.markerInk
     ctx.font = `700 ${Math.max(10, cell * 0.34)}px "SFMono-Regular", Consolas, monospace`
     ctx.textAlign = 'center'
     ctx.textBaseline = 'middle'
@@ -996,7 +1016,7 @@ export function CanvasView({
 
     // Hovered cell.
     if (hover) {
-      ctx.strokeStyle = 'rgba(47, 93, 80, 0.9)'
+      ctx.strokeStyle = C.start
       ctx.lineWidth = 1.5
       roundRect(ctx, ox + hover.x * cell + 1, oy + hover.y * cell + 1, cell - 2, cell - 2, 3)
       ctx.stroke()

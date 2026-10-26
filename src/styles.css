@@ -37,6 +37,127 @@
     "Liberation Mono", monospace;
 }
 
+/* --------------------------------------------------------------------------
+   Night theme.
+
+   Not an inversion. Paper becomes a dark stage, ink becomes warm ivory, and the
+   accents are lifted: the pine that reads as a calm green on cream turns to mud
+   on near-black, so it is raised until it reads as the same *idea* rather than
+   the same hex. The panel hierarchy inverts too -- the topbar is the darkest
+   surface and the canvas the lightest, because on a dark screen the work area
+   has to feel like the lit table, not a hole in it.
+   -------------------------------------------------------------------------- */
+[data-theme="dark"] {
+  color-scheme: dark;
+
+  --bg: #0b100e;
+  --panel: #111714;
+  --panel-2: #161d1a;
+  --paper: #0f1512;
+  --text: #e9e4d6;
+  --muted: #9aa69c;
+  --faint: #74817a;
+  --line: #212a26;
+  --line-strong: #33403a;
+  --pine: #6cae95;
+  --pine-deep: #8cc7ae;
+  --pine-soft: #15241e;
+  --clay: #d99a6c;
+  --clay-soft: #271e18;
+  --gold: #d6b176;
+  --gold-soft: #241f14;
+  --blue: #7cb0c0;
+  --blue-soft: #14232a;
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.45);
+}
+
+[data-theme="dark"] .topbar {
+  background: #0d1210;
+  border-bottom-color: #1d2521;
+}
+
+[data-theme="dark"] .sidebar {
+  background: #0f1512;
+  border-right-color: #1d2521;
+}
+
+[data-theme="dark"] .card-group {
+  border-color: #1e2723;
+}
+
+[data-theme="dark"] .stage-head {
+  color: var(--text);
+}
+
+[data-theme="dark"] .canvas-area {
+  background: #0e1412;
+  border-color: #1e2723;
+}
+
+[data-theme="dark"] .scenario-switch button.is-active,
+[data-theme="dark"] .lang-switch button.is-active,
+[data-theme="dark"] .inspector-tabs button.is-active {
+  background: var(--panel-2);
+  color: var(--text);
+}
+
+[data-theme="dark"] .btn-primary {
+  color: #0c1210;
+  background: var(--pine);
+}
+
+[data-theme="dark"] .btn-primary:hover {
+  background: var(--pine-deep);
+}
+
+/* elements that were painted with literal light colours */
+[data-theme="dark"] .edit-modes button:hover,
+[data-theme="dark"] .brush-sizes button:hover,
+[data-theme="dark"] .edit-actions button:hover {
+  background: rgba(255, 255, 255, 0.055);
+}
+
+[data-theme="dark"] .edit-modes button.is-active,
+[data-theme="dark"] .brush-sizes button.is-active,
+[data-theme="dark"] .map-size-editor input,
+[data-theme="dark"] .map-size-editor button,
+[data-theme="dark"] .choice-chip,
+[data-theme="dark"] .card-choice {
+  background: var(--panel-2);
+  border-color: var(--line-strong);
+  color: var(--text);
+}
+
+[data-theme="dark"] .edit-badge {
+  border-color: #4a3a30;
+}
+
+[data-theme="dark"] .map-size-editor {
+  border-left-color: #2c241e;
+}
+
+[data-theme="dark"] .stage-pill {
+  background: var(--panel-2);
+  border-color: var(--line);
+}
+
+[data-theme="dark"] .timeline-wrap {
+  background: #0d1210;
+  border-top-color: #1d2521;
+}
+
+[data-theme="dark"] .timeline {
+  background: #0d1210;
+}
+
+[data-theme="dark"] .tip,
+[data-theme="dark"] [class*="tooltip"] {
+  background: #171f1b;
+  border-color: #2a352f;
+  color: var(--text);
+}
+
+
 * {
   box-sizing: border-box;
 }

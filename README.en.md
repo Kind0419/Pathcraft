@@ -5,9 +5,9 @@ Build path-planning algorithms from parameter cards and watch the search, execut
 
 [中文](README.md) · [English](README.en.md)
 
-[Live Demo](https://Kind0419.github.io/Pathcraft/) · [GitHub](https://github.com/Kind0419/Pathcraft) · [MIT License](LICENSE)
+[Live Demo](https://Kind0419.github.io/Pathcraft/) · [GitHub](https://github.com/Kind0419/Pathcraft) · [Changelog](CHANGELOG.md) · [MIT License](LICENSE)
 
-> Status: `0.7.0` · 2D grid + continuous + 3D voxel / field · React + TypeScript + Canvas
+> Status: `0.8.0` · 2D grid + continuous + 3D voxel / field · light / dark · React + TypeScript + Canvas
 
 [![Pathcraft interactive demo](https://Kind0419.github.io/Pathcraft/preview-en.png?v=2)](https://Kind0419.github.io/Pathcraft/)
 
@@ -54,6 +54,7 @@ Pick modules from the component library, tune values in the assembly table, and 
 - Share URL, export JSON / CSV
 - Single-file offline build
 - Chinese / English switch
+- Light and dark themes: one toggle in the top bar, first visit follows the system preference; the canvases and the 3D stage switch with the UI instead of being an inversion of it
 
 ### Execution trace
 

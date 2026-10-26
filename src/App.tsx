@@ -14,6 +14,7 @@ import { Card } from './components/Card'
 import { CanvasView } from './components/CanvasView'
 import { Scene3D } from './components/Scene3D'
 import { FlowPanel } from './components/FlowPanel'
+import { setTheme, useTheme } from './lib/theme'
 import { Icon } from './components/Icon'
 import {
   CARD_BY_ID,
@@ -1434,6 +1435,7 @@ export default function App() {
   const [lang, setLang] = useState<Lang>(() =>
     readSetting('pathcraft:lang:v1') === 'en' ? 'en' : 'zh',
   )
+  const theme = useTheme()
   const [recipeOrder, setRecipeOrder] = useState<CardId[]>(
     () => INITIAL_RECIPE?.order ?? createDefaultRecipeOrder(),
   )
@@ -2216,6 +2218,16 @@ export default function App() {
             {is3D ? `${worldSize} · ${tr(lang, '三维')}` : `${map.width}×${map.height} · ${map.cellSize.toFixed(1)} m`}
           </span>
         </div>
+
+        <button
+          type="button"
+          className="btn btn-ghost theme-toggle"
+          onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+          title={theme === 'dark' ? tr(lang, '切换到浅色') : tr(lang, '切换到深色')}
+          aria-label={theme === 'dark' ? tr(lang, '切换到浅色') : tr(lang, '切换到深色')}
+        >
+          <Icon name={theme === 'dark' ? 'sun' : 'moon'} size={14} />
+        </button>
 
         <div className="lang-switch" role="group" aria-label="Language">
           <button
