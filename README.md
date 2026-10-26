@@ -7,9 +7,9 @@
 
 [Live Demo](https://Kind0419.github.io/Pathcraft/) · [GitHub](https://github.com/Kind0419/Pathcraft) · [更新日志](CHANGELOG.md) · [MIT License](LICENSE)
 
-> Status: `0.9.1` · 2D grid + continuous + 3D voxel / field · light / dark · React + TypeScript + Canvas
+> Status: `0.10.0` · 2D grid + continuous + 3D voxel / field · light / dark · React + TypeScript + Canvas
 
-[![Pathcraft interactive demo](https://Kind0419.github.io/Pathcraft/preview.gif?v=4)](https://Kind0419.github.io/Pathcraft/)
+[![Pathcraft interactive demo](https://Kind0419.github.io/Pathcraft/preview.gif?v=5)](https://Kind0419.github.io/Pathcraft/)
 
 > GitHub 的 README 是静态 Markdown，不能直接运行这个应用。点击上面的 GIF，或打开 <https://Kind0419.github.io/Pathcraft/> 进入可交互版本。
 
@@ -24,6 +24,7 @@ Pathcraft 是一个运行在浏览器里的路径规划实验台：**2D 栅格**
 - **搜索**：17 种策略 —— A*、Dijkstra、贪心、BFS、DFS、加权 A*、JPS、IDA*、双向 A*、Beam、D* Lite；RRT、RRT*、PRM、可见性图；蚁群 ACO、遗传算法
 - **代价**：间隙、转角、长度、斜向偏好、目标容差
 - **约束**：安全膨胀、最大转角、禁止掉头、切角、扩展预算
+- **算法内部参数**：采样步长、目标偏置、重连半径、PRM 连边半径、蚁群信息素挥发与启发指数、遗传算法变异率 —— 只出现在真正用得上它的算法上，而且每一个都真的改变求解结果（有回归脚本逐个验证）
 - **后处理**：可见性拉直、Chaikin 平滑（轮数）、路径抽稀（容差）
 
 在左侧组件库选择模块，右侧装配表调整数值，中间实时观察搜索波前、最终路径和上一版路径。流程页把当前回放帧映射到实际执行分支，并显示队列、扩展节点与卡片编译位点。选择 RRT / RRT* / PRM / 可见性图时，画布切换到连续 2D 空间，路径以光滑折线输出。
@@ -38,7 +39,8 @@ Pathcraft 是一个运行在浏览器里的路径规划实验台：**2D 栅格**
 - 栅格模式：A* / Dijkstra / 贪心 / BFS / DFS / 加权 A*
 - 连续模式：RRT / RRT* / PRM / 可见性图，输出光滑连续路径
 - 三维：正交投影视图（拖动旋转 / 滚轮缩放 / 复位），体素只画暴露面，路径按高度着色，柱子会真的挡住它后面的路
-- 三维端点：拖动时实时重规划，并锁定当前层（按住 Alt 跨层移动）；落点非法或不可达时标记直接变警示色
+- 三维手感：转视角是"目标值 + 缓动"而不是一帧一跟，甩动有惯性，俯仰到限位会回弹；滚轮朝光标缩放，指着的格子留在原地
+- 三维端点：拖动时实时重规划，并锁定当前层（按住 Alt 跨层移动）；标记永远画在真正会落下的格子上（手指位置只留一条虚线），落点非法或不可达时标记直接变警示色
 - 起终点点击与拖动；靠近障碍时沿安全边界滑动，并按格吸附到最近合法格
 - 搜索回放：播放、暂停、时间轴、0.5x / 1x / 2x；播放时路径从起点沿轨迹生长到终点
 - 搜索 / 路径 / 旧路径图层开关
@@ -47,7 +49,7 @@ Pathcraft 是一个运行在浏览器里的路径规划实验台：**2D 栅格**
 - 左 / 右 / 下三个面板可拖拽缩放，缩到阈值自动收起
 - 装配行拖动排序、拖出取消、拖动期间禁止选中文字
 - 组件库按搜索 / 代价 / 约束 / 后处理分组折叠，并显示参数符号
-- 流程页：可拖动的装配链 + 实时执行轨迹（当前节点、g/h/f、开放集、实际分支）
+- 流程页：可拖动的装配链 + 实时执行轨迹（当前节点、g/h/f、开放集、实际分支）；回放时按执行顺序逐行点亮伪代码，暂停就停在当前行
 - 悬停卡片时，流程中对应代码行与画布上的影响区域同步高亮
 - 参数详情页扫描并显示可行区间；不连续可行域不会被误锁死
 - 指标页：环形代价图 + 分段条 + 图例
@@ -61,7 +63,7 @@ Pathcraft 是一个运行在浏览器里的路径规划实验台：**2D 栅格**
 
 流程页不是静态示意图：它按当前回放帧高亮实际执行分支，右侧给出当前节点、g / h / f、开放集和扩展状态；下方的装配表可以拖动重排，悬停任意一行时画布会高亮该参数影响的区域。
 
-![Pathcraft execution trace](https://Kind0419.github.io/Pathcraft/preview-flow.png?v=2)
+![Pathcraft execution trace](https://Kind0419.github.io/Pathcraft/preview-flow.png?v=3)
 
 ### 连续空间
 
@@ -84,7 +86,7 @@ Pathcraft 是一个运行在浏览器里的路径规划实验台：**2D 栅格**
 - **帧循环**：相机状态放在 ref 里，由 requestAnimationFrame 驱动重绘，拖动时一次 React 渲染都不发生——这是"跟手"的前提
 - **采样规划**：RRT / RRT* 在三维里同样可用——树长在连续坐标里，栅格只当作碰撞检测的预言机
 
-![Pathcraft 3D voxel planning](https://Kind0419.github.io/Pathcraft/preview-3d.png?v=1)
+![Pathcraft 3D voxel planning](https://Kind0419.github.io/Pathcraft/preview-3d.png?v=2)
 
 ---
 
@@ -185,7 +187,7 @@ src/
     Icon.tsx              线性图标
   lib/
     types.ts              公共类型
-    cards.ts              16 张卡、参数符号、编译位点、默认值
+    cards.ts              26 张卡、参数符号、编译位点、默认值
     maps.ts               预设地图、规格限制、clearance
     planner.ts            图搜索、策略优先级、代价、约束、调度
     continuous.ts         RRT / RRT* / PRM / 可见性图、连续碰撞、平滑

@@ -27,6 +27,12 @@
   --gold-soft: #f3ecdd;
   --blue: #416877;
   --blue-soft: #e7eef0;
+  /* The flow panel's three separate greys. They were literals scattered through
+   * the trace rules, which is why the block was the one place that still looked
+   * wrong at night. */
+  --trace-rule: #ddd8ca;
+  --trace-linked: #eef2ed;
+  --trace-live-bg: #eaf1ea;
   --radius: 8px;
   --shadow-sm: 0 1px 2px rgba(35, 40, 35, 0.05);
   --font-ui: "Segoe UI Variable Text", "Segoe UI", "Aptos", "PingFang SC",
@@ -75,6 +81,9 @@
   --gold-soft: #26200f;
   --blue: #8ab8c6;
   --blue-soft: #17242a;
+  --trace-rule: #262319;
+  --trace-linked: #1f2721;
+  --trace-live-bg: #212a22;
 
   /* Chrome sits below the panels, not above them: a topbar brighter than the
    * sheet underneath is the thing that made the window feel edge-lit. */
@@ -3245,58 +3254,122 @@ body.is-dragging-card {
 
 .trace-stage-head strong {
   color: var(--text);
-  font-size: 11px;
-  font-weight: 600;
+  font-size: 12px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
 }
 
+/* The loop keyword, e.g. `WHILE OPEN ≠ ∅`. Uppercase mono at a smaller size:
+ * it is how the stage announces its own control flow, and it should read as a
+ * label rather than as part of the title. */
 .trace-stage-head span {
+  padding: 1px 5px;
   color: var(--faint);
+  background: var(--panel-2);
+  border-radius: 3px;
   font-family: var(--mono);
   font-size: 8px;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+/* The pseudo-code block.
+ *
+ * Three problems this replaces. The type was one size (10.5 px code, 9.5 px
+ * annotation) so nothing read as more important than anything else; there was
+ * no fixed left edge, so the eye had nothing to run down; and the annotation
+ * column was plain faint text, which made a real value look like a comment.
+ *
+ * The fix is three columns and one rhythm: a line number in a fixed gutter, the
+ * code, then the annotation as a pill. Line numbers come from a CSS counter on
+ * the stage body, so no JSX has to carry an index that could drift out of sync
+ * with the rows. */
+.trace-body {
+  counter-reset: trace-line;
 }
 
 .trace-code {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 3px 0;
-  border-bottom: 1px dashed rgba(203, 196, 181, 0.4);
+  /* Gutter = a 4 px lane for the live bar + a 12 px ruler for the number + air.
+   * The lane is reserved on *every* row, not added when a row goes live, so the
+   * code never shifts sideways as the caret moves down the block. */
+  --gutter: 22px;
+  position: relative;
+  display: grid;
+  /* `fit-content(46%)` is the load-bearing part: a percentage `max-width` on
+   * the item resolves against an indefinite track and collapses the column,
+   * while this clamps the *track* — max-content up to 52 % of the row. */
+  grid-template-columns: minmax(0, 1fr) fit-content(52%);
+  align-items: start;
+  gap: 9px;
+  padding: 4px 0 4px var(--gutter);
+  border-bottom: 1px dashed var(--trace-rule);
 }
 
 .trace-code:last-child {
   border-bottom: 0;
 }
 
+/* The gutter. Faint by default; it is a ruler, not content. */
+.trace-code::before {
+  counter-increment: trace-line;
+  content: counter(trace-line);
+  position: absolute;
+  top: 5px;
+  left: 6px;
+  width: 12px;
+  color: var(--faint);
+  font-family: var(--mono);
+  font-size: 8.5px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.7;
+  text-align: right;
+}
+
 .trace-code code {
   min-width: 0;
   color: var(--muted);
   font-family: var(--mono);
-  font-size: 10.5px;
-  line-height: 1.5;
+  font-size: 11.5px;
+  line-height: 1.7;
   word-break: break-word;
 }
 
+/* The annotation: a value you can actually read, not a footnote.
+ *
+ * Wraps rather than clips. The panel is ~330 px wide and the annotation is
+ * sometimes a list ("d ≥ 1.60 格 · 禁止穿角 · Δθ ≤ 90°"), so a single-line pill
+ * with an ellipsis turned three real values into "d ≥ 1…". A soft rectangle
+ * that grows to two or three lines keeps them; the radius is 5px, not 999px,
+ * because a fully round pill around wrapped text reads as a mistake. */
 .trace-code > span:last-child {
-  flex: none;
-  max-width: 43%;
-  color: var(--faint);
+  justify-self: end;
+  padding: 0 6px;
+  color: var(--muted);
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 5px;
   font-family: var(--mono);
-  font-size: 9.5px;
-  line-height: 1.5;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.6;
   text-align: right;
   white-space: normal;
   overflow-wrap: anywhere;
 }
 
+/* An empty annotation should not leave a pill floating there. */
+.trace-code > span:last-child:empty {
+  display: none;
+}
+
 .trace-code.is-indent code {
-  padding-left: 8px;
+  padding-left: 11px;
   border-left: 1px solid var(--line);
 }
 
 .trace-code.is-indent-2 code {
-  padding-left: 17px;
+  padding-left: 23px;
   border-left: 1px solid var(--line);
 }
 
@@ -3306,12 +3379,61 @@ body.is-dragging-card {
 }
 
 .trace-code.is-linked {
-  margin: 0 -4px;
-  padding-right: 4px;
-  padding-left: 4px;
-  background: rgba(47, 93, 80, 0.07);
+  background: var(--trace-linked);
   border-radius: 3px;
   box-shadow: inset 2px 0 0 var(--pine);
+}
+
+/* Where the replay is *now*.
+ *
+ * A bar in the gutter plus a lifted row: the bar is the thing that survives
+ * being scaled down in a screenshot, the tint is what makes it findable at a
+ * glance. The bar is drawn on the row's own left edge rather than the code's,
+ * so it does not shift when the indent changes — that is what makes the walk
+ * down the block read as a single cursor. */
+.trace-code.is-live {
+  background: var(--trace-live-bg);
+  border-radius: 3px;
+  /* Inside the box, so the bar costs no layout. */
+  box-shadow: inset 3px 0 0 var(--pine);
+}
+
+.trace-code.is-live::before {
+  color: var(--pine);
+  font-weight: 700;
+}
+
+.trace-code.is-live code {
+  color: var(--text);
+}
+
+.trace-code.is-live > span:last-child {
+  color: var(--pine);
+  background: var(--pine-soft);
+  border-color: var(--pine);
+}
+
+/* While the replay is running the caret pulses, slowly, so the block reads as
+ * alive without the numbers becoming hard to read. Paused, it stops — a
+ * blinking panel that is not playing is a lie. */
+.is-playing .trace-code.is-live {
+  animation: trace-live 1.5s ease-in-out infinite;
+}
+
+@keyframes trace-live {
+  0%,
+  100% {
+    box-shadow: inset 3px 0 0 var(--pine);
+  }
+  50% {
+    box-shadow: inset 3px 0 0 var(--pine), 0 0 0 3px var(--pine-soft);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .is-playing .trace-code.is-live {
+    animation: none;
+  }
 }
 
 .trace-stage.is-linked .trace-node {
@@ -3320,8 +3442,8 @@ body.is-dragging-card {
 }
 
 .trace-formula {
-  margin: 3px 0 2px;
-  padding: 5px 7px;
+  margin: 3px 0 4px;
+  padding: 6px 8px;
   background: var(--panel-2);
   border: 1px solid var(--line);
   border-radius: 4px;
@@ -3329,7 +3451,7 @@ body.is-dragging-card {
 
 .trace-formula code {
   color: var(--text);
-  font-size: 9px;
+  font-size: 10px;
 }
 
 .trace-chip {

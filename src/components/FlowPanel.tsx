@@ -28,6 +28,45 @@ function fmt(value: number, digits = 2): string {
   return value.toFixed(digits)
 }
 
+/**
+ * The lines of the main loop, in execution order.
+ *
+ * One replay frame is one search event, and one event is a whole iteration —
+ * eight of these lines inside sixteen milliseconds. Lighting them literally
+ * would be a strobe, not an explanation. So the walk is *paced*: about one line
+ * per four frames, which is fast enough to read as "this is running" and slow
+ * enough to follow. Where the data is decisive it overrides the pace: arrival
+ * lights the arrival line, and a run that ends lights its own ending.
+ *
+ * The canvas is the exact record. This panel is the readable one, and the
+ * difference is deliberate rather than an approximation pretending to be data.
+ */
+type StepId =
+  | 'init'
+  | 'pop'
+  | 'dedupe'
+  | 'count'
+  | 'goal'
+  | 'budget'
+  | 'neighbors'
+  | 'filter'
+  | 'relax'
+  | 'return'
+  | 'fail'
+
+const LOOP_STEPS: StepId[] = [
+  'pop',
+  'dedupe',
+  'count',
+  'goal',
+  'budget',
+  'neighbors',
+  'filter',
+  'relax',
+]
+/** Replay frames per highlighted line. */
+const FRAMES_PER_STEP = 4
+
 function buildSparkline(events: PlanResult['events']): string {
   if (events.length < 2) return ''
   const stride = Math.max(1, Math.ceil(events.length / 90))
@@ -84,6 +123,23 @@ export function FlowPanel({
         ? 'done'
         : 'fail'
       : 'loop'
+
+  const activeStep: StepId =
+    phase === 'init' ? 'init' : phase === 'done' ? 'return' : phase === 'fail' ? 'fail' : LOOP_STEPS[Math.floor(playhead / FRAMES_PER_STEP) % LOOP_STEPS.length]
+  /**
+   * Show the caret wherever a frame has been reached: while running, while
+   * paused on a frame the user chose to inspect, and on the last frame — where
+   * it parks on the terminating line (`return reconstruct` / `return ∅`) so the
+   * ending is marked rather than the panel going blank.
+   *
+   * The one state without a caret is frame zero before playback: nothing has
+   * executed, so nothing is lit. A static panel with a bright line on it is
+   * exactly the "decorative" failure this round is about.
+   */
+  const showLive = playing || current !== null
+
+  const liveClass = (step: StepId, extra = '') =>
+    `trace-code${extra ? ` ${extra}` : ''}${showLive && activeStep === step ? ' is-live' : ''}`
 
   const mode = cards.strategy.enabled ? Math.round(cards.strategy.value) : 0
   const heuristic = cards.heuristic.enabled ? cards.heuristic.value : 0
@@ -148,7 +204,7 @@ export function FlowPanel({
   const isGraph = !trace || trace.kind === 'graph'
 
   return (
-    <div className="panel-scroll flow-panel">
+    <div className={`panel-scroll flow-panel${playing ? ' is-playing' : ''}`}>
       <div className="flow-head">
         <span className="flow-kicker">{tr(lang, '实时回放')}</span>
         <div className="flow-title">
@@ -202,11 +258,11 @@ export function FlowPanel({
             </div>
             {isGraph ? (
               <>
-                <div className="trace-code">
+                <div className={liveClass('init')}>
                   <code>open ← {'{(S, dir=∅, g=0)}'}</code>
                   <span>open 1</span>
                 </div>
-                <div className="trace-code">
+                <div className={liveClass('init')}>
                   <code>
                     h(S) = {fmt(result.events[0]?.h ?? 0)} · f(S) = {fmt(result.events[0]?.f ?? 0)}
                   </code>
@@ -252,15 +308,15 @@ export function FlowPanel({
                   <code>while open ≠ ∅:</code>
                   <span>{current ? `open ${current.openSize}` : 'open 1'}</span>
                 </div>
-                <div className="trace-code is-indent">
+                <div className={liveClass('pop', 'is-indent')}>
                   <code>n ← pop_min(open)</code>
                   <span>{current ? `n (${current.x}, ${current.y})` : 'n = S'}</span>
                 </div>
-                <div className="trace-code is-indent">
+                <div className={liveClass('dedupe', 'is-indent')}>
                   <code>if closed[n]: continue</code>
                   <span className="trace-chip">{tr(lang, '去重')}</span>
                 </div>
-                <div className="trace-code is-indent">
+                <div className={liveClass('count', 'is-indent')}>
                   <code>expanded += 1</code>
                   <span>
                     {fmtNum(lang, expandedNow)}
@@ -268,7 +324,10 @@ export function FlowPanel({
                   </span>
                 </div>
                 <div
-                  className={`trace-code is-indent ${success ? 'is-hit' : ''} ${isLinked(['goalTolerance']) ? 'is-linked' : ''}`}
+                  className={liveClass(
+                    'goal',
+                    `is-indent ${success ? 'is-hit' : ''} ${isLinked(['goalTolerance']) ? 'is-linked' : ''}`,
+                  )}
                 >
                   <code>if dist(n, G) ≤ {fmt(goalDistance)}: break</code>
                   <span className={`trace-chip ${success ? 'is-yes' : 'is-no'}`}>
@@ -276,7 +335,10 @@ export function FlowPanel({
                   </span>
                 </div>
                 <div
-                  className={`trace-code is-indent ${budgetExceeded ? 'is-hit' : ''} ${isLinked(['budget']) ? 'is-linked' : ''}`}
+                  className={liveClass(
+                    'budget',
+                    `is-indent ${budgetExceeded ? 'is-hit' : ''} ${isLinked(['budget']) ? 'is-linked' : ''}`,
+                  )}
                 >
                   <code>if expanded &gt; N_max: break</code>
                   <span className={`trace-chip ${budgetExceeded ? 'is-yes' : 'is-no'}`}>
@@ -287,14 +349,17 @@ export function FlowPanel({
                       : tr(lang, '未启用')}
                   </span>
                 </div>
-                <div className={`trace-code is-indent ${isLinked(['diagonal']) ? 'is-linked' : ''}`}>
+                <div className={liveClass('neighbors', `is-indent ${isLinked(['diagonal']) ? 'is-linked' : ''}`)}>
                   <code>for m in δ(n):</code>
                   <span className="trace-chip">
                     {cards.diagonal.enabled ? tr(lang, '8 邻域') : tr(lang, '4 邻域')}
                   </span>
                 </div>
                 <div
-                  className={`trace-code is-indent-2 ${isLinked(['collision', 'cornerCut', 'noUTurn', 'maxTurn']) ? 'is-linked' : ''}`}
+                  className={liveClass(
+                    'filter',
+                    `is-indent-2 ${isLinked(['collision', 'cornerCut', 'noUTurn', 'maxTurn']) ? 'is-linked' : ''}`,
+                  )}
                 >
                   <code>if filter(m): continue</code>
                   <span className="trace-chip">
@@ -302,7 +367,10 @@ export function FlowPanel({
                   </span>
                 </div>
                 <div
-                  className={`trace-code is-indent-2 ${isLinked(['clearance', 'turn', 'lengthWeight', 'diagonalBias']) ? 'is-linked' : ''}`}
+                  className={liveClass(
+                    'relax',
+                    `is-indent-2 ${isLinked(['clearance', 'turn', 'lengthWeight', 'diagonalBias']) ? 'is-linked' : ''}`,
+                  )}
                 >
                   <code>if g + c &lt; g(m): push</code>
                   <span className="trace-chip">{costTerms.join(' · ')}</span>
@@ -320,12 +388,23 @@ export function FlowPanel({
                       : '—'}
                   </span>
                 </div>
-                {(trace?.loop ?? []).map((line) => (
-                  <div className="trace-code is-indent" key={line}>
-                    <code>{line}</code>
-                    <span />
-                  </div>
-                ))}
+                {(trace?.loop ?? []).map((line, index) => {
+                  const steps = trace?.loop.length ?? 0
+                  const onIt =
+                    showLive &&
+                    phase === 'loop' &&
+                    steps > 0 &&
+                    Math.floor(playhead / FRAMES_PER_STEP) % steps === index
+                  return (
+                    <div
+                      className={`trace-code is-indent${onIt ? ' is-live' : ''}`}
+                      key={line}
+                    >
+                      <code>{line}</code>
+                      <span />
+                    </div>
+                  )
+                })}
                 <div className={`trace-code is-indent ${budgetExceeded ? 'is-hit' : ''}`}>
                   <code>expanded &gt; N_max ?</code>
                   <span className={`trace-chip ${budgetExceeded ? 'is-yes' : 'is-no'}`}>
@@ -354,7 +433,7 @@ export function FlowPanel({
             </div>
             {success ? (
               <>
-                <div className="trace-code">
+                <div className={liveClass('return')}>
                   <code>{isGraph ? 'return reconstruct(parent, n_goal)' : trace?.terminate[0]}</code>
                   <span className="trace-chip is-yes">{tr(lang, '命中终点')}</span>
                 </div>
@@ -369,7 +448,7 @@ export function FlowPanel({
               </>
             ) : failed ? (
               <>
-                <div className="trace-code">
+                <div className={liveClass('fail')}>
                   <code>return ∅</code>
                   <span className="trace-chip is-no">
                     {budgetExceeded ? tr(lang, '预算耗尽') : tr(lang, '开放集为空')}

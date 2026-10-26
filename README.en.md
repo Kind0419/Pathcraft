@@ -7,9 +7,9 @@ Build path-planning algorithms from parameter cards and watch the search, execut
 
 [Live Demo](https://Kind0419.github.io/Pathcraft/) · [GitHub](https://github.com/Kind0419/Pathcraft) · [Changelog](CHANGELOG.md) · [MIT License](LICENSE)
 
-> Status: `0.9.1` · 2D grid + continuous + 3D voxel / field · light / dark · React + TypeScript + Canvas
+> Status: `0.10.0` · 2D grid + continuous + 3D voxel / field · light / dark · React + TypeScript + Canvas
 
-[![Pathcraft interactive demo](https://Kind0419.github.io/Pathcraft/preview-en.png?v=2)](https://Kind0419.github.io/Pathcraft/)
+[![Pathcraft interactive demo](https://Kind0419.github.io/Pathcraft/preview-en.png?v=3)](https://Kind0419.github.io/Pathcraft/)
 
 > GitHub README is static Markdown, so the app cannot run inside it. Click the screenshot above, or open <https://Kind0419.github.io/Pathcraft/> for the interactive version.
 
@@ -24,6 +24,7 @@ It decomposes planning into composable parameter modules:
 - **Search**: 17 strategies — A*, Dijkstra, greedy best-first, BFS, DFS, weighted A*, JPS, IDA*, bidirectional A*, Beam, D* Lite; RRT, RRT*, PRM, visibility graph; ant colony (ACO), genetic algorithm
 - **Cost**: clearance, turn, length, diagonal bias, goal tolerance
 - **Constraints**: safety inflation, max turn, no U-turn, corner cut, expansion budget
+- **Algorithm internals**: sampling step, goal bias, rewire radius, PRM connect radius, pheromone evaporation and heuristic exponent, mutation rate — offered only on the algorithms that use them, and each one measurably changes the answer (a regression script checks every knob)
 - **Post-process**: line-of-sight straightening, Chaikin smoothing (passes), path thinning (tolerance)
 
 Pick modules from the component library, tune values in the assembly table, and watch the search frontier, final path and previous path update in the canvas. The Flow tab maps the current replay frame to the actual execution branch and shows the queue, expanded states and each card's compile site. Selecting RRT / RRT* / PRM / Visibility graph switches the canvas to a continuous 2D space and outputs a smooth polyline.
@@ -38,7 +39,8 @@ Pick modules from the component library, tune values in the assembly table, and 
 - Grid mode: A* / Dijkstra / greedy / BFS / DFS / weighted A* / JPS / IDA* / bidirectional A* / Beam / D* Lite
 - Continuous mode: RRT / RRT* / PRM / visibility graph with smooth continuous paths
 - 3D view: orthographic (drag to orbit, scroll to zoom, reset); voxel worlds draw exposed faces only, the route is tinted by altitude, and columns really do occlude the route behind them
-- 3D endpoints: dragging re-plans live and holds the current layer (hold Alt to change layer); an illegal or unreachable drop turns the marker into a warning
+- 3D feel: the orbit chases a target instead of copying each pointer sample, so a flick coasts and settles; scroll zooms toward the cursor, and pitch gives a little at the limit before springing back
+- 3D endpoints: dragging re-plans live and holds the current layer (hold Alt to change layer); the marker is always drawn on the cell the drop will actually use — the finger keeps a thin dashed tie — and an illegal or unreachable drop turns the marker into a warning
 - Click or drag start and goal; markers slide along safe boundaries and snap to the nearest legal cell
 - Search replay: play, pause, timeline, 0.5x / 1x / 2x; the route grows from start to goal as it runs
 - Search / path / previous-path layer toggles
@@ -47,7 +49,7 @@ Pick modules from the component library, tune values in the assembly table, and 
 - Resizable left / right / bottom panels with auto-collapse
 - Drag rows to reorder; cancel by dropping outside; text selection is disabled while dragging
 - Component library grouped by Search / Cost / Constraints / Post-process, with parameter symbols
-- Flow tab: draggable assembly chain + live execution trace (current node, g/h/f, open set, actual branches)
+- Flow tab: draggable assembly chain + live execution trace (current node, g/h/f, open set, actual branches); during replay the pseudo-code is lit line by line in execution order, and pausing leaves the caret on the current line
 - Hover a card to highlight its code line in the Flow tab and its affected area on the canvas
 - Parameter inspector scans and draws the feasible range; disjoint feasible sets are never locked out
 - Metrics tab: cost donut + segmented bar + legend
@@ -61,7 +63,7 @@ Pick modules from the component library, tune values in the assembly table, and 
 
 The Flow tab is not a static diagram. It highlights the branch taken at the current replay frame and shows the current node, g / h / f, open set and expansion state. The assembly table below can be dragged to reorder; hovering a row highlights the affected area on the canvas.
 
-![Pathcraft execution trace](https://Kind0419.github.io/Pathcraft/preview-flow-en.png?v=2)
+![Pathcraft execution trace](https://Kind0419.github.io/Pathcraft/preview-flow-en.png?v=3)
 
 ### Continuous space
 
@@ -84,7 +86,7 @@ Voxel worlds and continuous fields share a single orthographic view: no WebGL an
 - **Frame loop**: the camera lives in a ref and repaints from requestAnimationFrame, so a drag triggers no React render at all — which is what makes it track the hand
 - **Sampling in 3D**: RRT and RRT* work here too — the tree lives in continuous coordinates, and the lattice is only a collision oracle
 
-![Pathcraft 3D voxel planning](https://Kind0419.github.io/Pathcraft/preview-3d.png?v=1)
+![Pathcraft 3D voxel planning](https://Kind0419.github.io/Pathcraft/preview-3d.png?v=2)
 
 ---
 

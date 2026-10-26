@@ -32,6 +32,17 @@ import type { World } from '../lib/worlds'
 import { snapOnLayer } from '../lib/worlds'
 import { tr, useLang } from '../lib/i18n'
 import { CANVAS, type CanvasPalette, useTheme } from '../lib/theme'
+// The camera lives in its own module so `scripts/pick.ts` can round-trip it
+// without a canvas. Picking inverts exactly what this draws; one copy of the
+// maths is the only way to keep that true.
+import {
+  Z_LIFT,
+  fitView,
+  projectIn,
+  unprojectIn,
+  viewRay,
+  type CameraFrame,
+} from '../lib/projection'
 
 interface Props {
   world: World
@@ -202,9 +213,49 @@ const PITCH_MAX = 1.42
 const ZOOM_MIN = 0.55
 const ZOOM_MAX = 3.6
 
-interface Bounds {
-  min: Vec3
-  max: Vec3
+/**
+ * How hard the camera chases the hand, in milliseconds.
+ *
+ * The time constant, not a per-frame fraction: `1 − exp(−dt/τ)` converges in
+ * the same wall-clock time at any refresh rate. 52 ms is ~0.27 of the remaining
+ * distance per frame at 60 Hz — enough smoothing to swallow a stutter, little
+ * enough that the scene still feels attached to the pointer.
+ */
+const CAM_TAU = 52
+/** The drag marker's walk between cells. Slightly slower, so it reads as snap. */
+const DRAG_EASE_TAU = 64
+/** How far past the pitch limit the hand may push, in radians (~4°). */
+const PITCH_GIVE = 0.07
+/**
+ * The window a release velocity is measured over, in ms.
+ *
+ * Long enough to average out a dropped pointermove, short enough that a
+ * deliberate slow drag registers as slow rather than as a flick.
+ */
+const FLICK_WINDOW_MS = 90
+
+/**
+ * Soft pitch limits.
+ *
+ * Capped hard at `PITCH_GIVE` past the range rather than proportional: an
+ * axonometric projection turns inside out at 90°, so "let it overshoot freely
+ * and spring back" would let a fast flick show the scene upside down for a
+ * frame. Four degrees is enough to feel like an edge, and far from vertical.
+ */
+function softPitch(pitch: number) {
+  return clamp(pitch, PITCH_MIN - PITCH_GIVE, PITCH_MAX + PITCH_GIVE)
+}
+
+/**
+ * Keep a pan from walking the scene off the canvas.
+ *
+ * Panning is only ever a side effect of zooming about the cursor, so it should
+ * stay small; this is the backstop for a long wheel session at max zoom, where
+ * a few hundred accumulations could otherwise leave an empty canvas.
+ */
+function clampPan(value: number, extent: number) {
+  const limit = extent * 0.55
+  return Math.max(-limit, Math.min(limit, value))
 }
 
 interface View {
@@ -228,64 +279,6 @@ function rgbTuple(hex: string): [number, number, number] {
 }
 
 const clamp = (value: number, low: number, high: number) => Math.max(low, Math.min(high, value))
-
-/**
- * The camera fit — computed once, used by both the renderer and by picking.
- *
- * Picking inverts exactly this transform. If two copies of it drifted apart (a
- * different pad, a different corner set) a click would drop the start marker
- * slightly away from the cursor, and that symptom — "the scene is wrong" — is
- * nowhere near its cause. So it lives in one function, called from both places.
- */
-/**
- * Vertical exaggeration.
- *
- * The voxel volumes are one cell tall. At true isometric proportion a one-cell
- * wall shows its top face as a sliver, so a room reads as cardboard cut-outs
- * standing on a plate -- which is most of what "looks like a CAD screenshot"
- * meant. Real isometric art cheats this: stretch the z axis and the same cells
- * become walls with a readable top, a readable side, and a shadow between them.
- * 1.55 is enough to give the volume a face without tipping into "tall building".
- */
-const Z_LIFT = 1.22
-
-function fitView(bounds: Bounds, width: number, height: number, yaw: number, pitch: number, zoom: number) {
-  const cy = Math.cos(yaw)
-  const sy = Math.sin(yaw)
-  const cp = Math.cos(pitch)
-  const sp = Math.sin(pitch)
-  let minX = Infinity
-  let maxX = -Infinity
-  let minY = Infinity
-  let maxY = -Infinity
-  for (let i = 0; i < 8; i += 1) {
-    const x = i & 1 ? bounds.max.x : bounds.min.x
-    const y = i & 2 ? bounds.max.y : bounds.min.y
-    const z = i & 4 ? bounds.max.z : bounds.min.z
-    const px = x * cy + y * sy
-    const ry = -x * sy + y * cy
-    const py = -(ry * sp + z * Z_LIFT * cp)
-    if (px < minX) minX = px
-    if (px > maxX) maxX = px
-    if (py < minY) minY = py
-    if (py > maxY) maxY = py
-  }
-  const pad = 20
-  const fit = Math.min(
-    (width - pad * 2) / Math.max(1e-6, maxX - minX),
-    (height - pad * 2) / Math.max(1e-6, maxY - minY),
-  )
-  const scale = fit * zoom
-  return {
-    scale,
-    originX: width / 2 - ((minX + maxX) / 2) * scale,
-    originY: height / 2 - ((minY + maxY) / 2) * scale,
-    cy,
-    sy,
-    cp,
-    sp,
-  }
-}
 
 /**
  * Nudge a projected quad outward by a fraction of a pixel.
@@ -315,20 +308,6 @@ function expandQuad(pts: Array<{ x: number; y: number }>, amount: number) {
     const k = (len + amount) / len
     return { x: cx + dx * k, y: cy + dy * k }
   })
-}
-
-type Frame = ReturnType<typeof fitView>
-
-/** Project one world point through a frame. Also returns its sort depth. */
-function projectIn(frame: Frame, p: Vec3) {
-  const rx = p.x * frame.cy + p.y * frame.sy
-  const ry = -p.x * frame.sy + p.y * frame.cy
-  const z = p.z * Z_LIFT
-  return {
-    x: frame.originX + rx * frame.scale,
-    y: frame.originY - (ry * frame.sp + z * frame.cp) * frame.scale,
-    depth: ry * frame.cp - z * frame.sp,
-  }
 }
 
 /**
@@ -501,26 +480,46 @@ export function Scene3D({
   const hostRef = useRef<HTMLDivElement | null>(null)
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const [size, setSize] = useState({ width: 0, height: 0 })
+  /** Last painted viewport, for the frame loop. A ref, not `size`: the loop runs
+   *  inside a closure that must not go stale on resize. */
+  const viewportRef = useRef({ width: 0, height: 0 })
 
   /* ------------------------------------------------------------- camera --- */
-  // Authoritative in a ref: dragging must not re-render React. `zoomTarget` is
-  // where the easing is heading; `view.zoom` is where it is right now.
+  // Authoritative in refs: dragging must not re-render React.
+  //
+  // Two views of the same camera. `target` is what the hand asked for; `view`
+  // is what the picture is drawn with, and it chases the target with a time
+  // constant. The orbit used to write `view` directly, one pointer sample at a
+  // time — so a jittery input became a jittery scene, and a dropped sample
+  // became a visible lurch. Easing through a target absorbs both, and it costs
+  // nothing: the frame loop already exists for zoom.
   const viewRef = useRef<View>({ ...HOME_VIEW })
-  const zoomTargetRef = useRef(HOME_VIEW.zoom)
+  const targetRef = useRef<View>({ ...HOME_VIEW })
+  /** Coast velocity, radians per second. Only spins up on a flick. */
   const spinRef = useRef({ yaw: 0, pitch: 0 })
+  /** Screen-space nudge from zooming toward the cursor instead of the centre. */
+  const panRef = useRef({ x: 0, y: 0 })
+  /** The world point under the pointer when the wheel turned. Held still. */
+  const zoomAnchorRef = useRef<{ x: number; y: number; world: Vec3 } | null>(null)
+  /** Recent pointer samples, for a velocity that survives a dropped event. */
+  const trailRef = useRef<Array<{ t: number; x: number; y: number }>>([])
   const homeRef = useRef(false)
 
   /* -------------------------------------------------------- interaction --- */
   // A drag has two positions, and they are not the same thing.
   //
-  //   marker  — where the hand is, unsnapped, redrawn at pointer rate
-  //   anchor  — the legal cell the planner will actually use
+  //   finger — where the hand is, unsnapped
+  //   anchor — the legal cell the planner will actually use, and the only
+  //            thing the marker is ever drawn on
   //
-  // The 2D canvas makes the same split: the marker tracks the cursor while the
-  // endpoint it commits is the nearest legal cell, which is why dragging over a
-  // wall there reads as *sliding* along it rather than stopping dead. In 3D the
-  // two were the same point, so a finger crossing a column made the marker jump
-  // a cell, refuse the drop, or blank the route — three flavours of "stuck".
+  // The 2D canvas makes the same split: dragging over a wall slides the
+  // endpoint to the nearest legal cell instead of stopping dead. In 3D the
+  // marker used to follow the *finger* while the drop used the *anchor*, so
+  // the two disagreed by however far the snap had to reach — which reads as
+  // "I put it here and it went there". Drawing the marker on the anchor fixes
+  // that by construction: the picture and the result are the same object. The
+  // finger keeps a thin dashed tie, so when it has been pushed away from a
+  // wall you can see by how much.
   //
   // A commit costs a search (45–56 ms in a voxel world), so it is budgeted:
   // only when the anchor cell changes, never more than once per DRAG_PLAN_MS,
@@ -530,13 +529,22 @@ export function Scene3D({
   const SLIDE_CELLS = 3
   const ghostRef = useRef<{
     which: 'start' | 'goal'
-    /** Where the marker is drawn: the unsnapped point under the finger. */
+    /** The unsnapped point under the finger. Drawn as a hint, never as the marker. */
     point: Vec3
-    /** The legal cell the drag currently resolves to. */
+    /** The legal cell the drag currently resolves to — where the marker is drawn. */
     anchor: Vec3
     /** The finger is over something the anchor had to slide away from. */
     sliding: boolean
   } | null>(null)
+  /**
+   * The marker's eased position, in world space.
+   *
+   * A cell-snapped marker jumps a cell at a time, and a jumped control reads as
+   * a dropped input rather than a snapped one. This chases `ghost.anchor` in
+   * the frame loop, so the marker *walks* to the cell it will land in — and
+   * arrives before the route does.
+   */
+  const dragEaseRef = useRef<Vec3 | null>(null)
   const hoverRef = useRef<'start' | 'goal' | null>(null)
   const dragRef = useRef<{
     mode: 'orbit' | 'start' | 'goal'
@@ -565,7 +573,7 @@ export function Scene3D({
   /** Route for the current drag position. `null` path means "no answer here". */
   const previewRef = useRef<{ path: Vec3[] | null } | null>(null)
   /** The exact transform the last frame was drawn with, reused for hit-testing. */
-  const frameRef = useRef<Frame | null>(null)
+  const frameRef = useRef<CameraFrame | null>(null)
 
   /* --------------------------------------------------------- scheduling --- */
   const drawRef = useRef<() => void>(() => {})
@@ -705,59 +713,180 @@ export function Scene3D({
   }, [])
 
   /**
-   * The frame loop: eased zoom, orbit inertia, and the home tween.
+   * The frame loop: eased orbit, eased zoom, coast, the home tween, and the
+   * drag marker's walk to its cell.
    *
-   * One loop for all three because they are the same problem — a value that
-   * should approach a target instead of jumping to it. It parks itself as soon
-   * as everything is settled, so an idle canvas costs nothing.
+   * One loop for all of them because they are the same problem — a value that
+   * should approach a target instead of jumping to it. Every step is scaled by
+   * `dt`, so the feel does not change with the refresh rate: a 30 Hz laptop and
+   * a 144 Hz monitor converge in the same wall-clock time. The old loop moved a
+   * fixed fraction of the remaining distance per frame, which is why inertia
+   * felt different on different machines and why a dropped frame read as a
+   * lurch.
+   *
+   * It parks itself as soon as everything has settled, so an idle canvas costs
+   * nothing.
    */
   const ensureAnimation = useCallback(() => {
     if (animRef.current != null) return
-    const frame = () => {
+    let last = performance.now()
+    const frame = (now: number) => {
+      // Clamped: a backgrounded tab comes back with a multi-second gap, and a
+      // dt that large would teleport the camera instead of easing it.
+      const dt = Math.min(64, Math.max(8, now - last))
+      last = now
       const view = viewRef.current
+      const target = targetRef.current
+      const ease = (tau: number) => 1 - Math.exp(-dt / tau)
       let busy = false
 
-      const dz = zoomTargetRef.current - view.zoom
-      if (Math.abs(dz) > 0.0006) {
-        view.zoom += dz * 0.24
-        busy = true
-      } else {
-        view.zoom = zoomTargetRef.current
-      }
-
+      // --- coast ---------------------------------------------------------
       const spin = spinRef.current
-      if (Math.abs(spin.yaw) > 1e-4 || Math.abs(spin.pitch) > 1e-4) {
-        view.yaw += spin.yaw
-        view.pitch = clamp(view.pitch + spin.pitch, PITCH_MIN, PITCH_MAX)
-        spin.yaw *= 0.9
-        spin.pitch *= 0.9
+      if (Math.abs(spin.yaw) > 0.02 || Math.abs(spin.pitch) > 0.02) {
+        target.yaw += (spin.yaw * dt) / 1000
+        target.pitch = softPitch(target.pitch + (spin.pitch * dt) / 1000)
+        // Per-second decay, so a flick coasts the same distance regardless of
+        // frame rate. 0.06 keeps 6% after a second: a clear stop, not a glide.
+        const damp = Math.pow(0.06, dt / 1000)
+        spin.yaw *= damp
+        spin.pitch *= damp
         busy = true
-      } else {
+      } else if (spin.yaw !== 0 || spin.pitch !== 0) {
         spin.yaw = 0
         spin.pitch = 0
+        busy = true
       }
 
+      // --- pitch limits ---------------------------------------------------
+      // The edge gives 4° while the hand is on it, then takes it back. A hard
+      // stop at the limit is what made the drag feel like it had snagged.
+      if (dragRef.current?.mode !== 'orbit' && !homeRef.current) {
+        const settledPitch = clamp(target.pitch, PITCH_MIN, PITCH_MAX)
+        if (Math.abs(settledPitch - target.pitch) > 1e-4) {
+          target.pitch += (settledPitch - target.pitch) * ease(150)
+          busy = true
+        } else {
+          target.pitch = settledPitch
+        }
+      }
+
+      // --- home -----------------------------------------------------------
       if (homeRef.current) {
         // Shortest way round: after a few orbits yaw may be at +9 rad, and
         // tweening to −0.66 the naive way spins the scene twice.
-        const targetYaw = HOME_VIEW.yaw + TAU * Math.round((view.yaw - HOME_VIEW.yaw) / TAU)
-        view.yaw += (targetYaw - view.yaw) * 0.18
-        view.pitch += (HOME_VIEW.pitch - view.pitch) * 0.18
-        const homeZoom = HOME_VIEW.zoom
-        view.zoom += (homeZoom - view.zoom) * 0.18
-        zoomTargetRef.current = view.zoom
+        target.yaw = HOME_VIEW.yaw + TAU * Math.round((view.yaw - HOME_VIEW.yaw) / TAU)
+        target.pitch = HOME_VIEW.pitch
+        target.zoom = HOME_VIEW.zoom
+        panRef.current.x += (0 - panRef.current.x) * ease(170)
+        panRef.current.y += (0 - panRef.current.y) * ease(170)
         const settled =
-          Math.abs(targetYaw - view.yaw) < 0.003 &&
-          Math.abs(HOME_VIEW.pitch - view.pitch) < 0.003 &&
-          Math.abs(homeZoom - view.zoom) < 0.004
+          Math.abs(target.yaw - view.yaw) < 0.004 &&
+          Math.abs(target.pitch - view.pitch) < 0.004 &&
+          Math.abs(target.zoom - view.zoom) < 0.006 &&
+          Math.abs(panRef.current.x) < 0.6 &&
+          Math.abs(panRef.current.y) < 0.6
         if (settled) {
           view.yaw = HOME_VIEW.yaw
           view.pitch = HOME_VIEW.pitch
-          view.zoom = homeZoom
-          zoomTargetRef.current = homeZoom
+          view.zoom = HOME_VIEW.zoom
+          target.yaw = HOME_VIEW.yaw
+          target.pitch = HOME_VIEW.pitch
+          target.zoom = HOME_VIEW.zoom
+          panRef.current.x = 0
+          panRef.current.y = 0
+          zoomAnchorRef.current = null
           homeRef.current = false
         } else {
           busy = true
+        }
+      }
+
+      // --- chase ----------------------------------------------------------
+      const dyaw = target.yaw - view.yaw
+      if (Math.abs(dyaw) > 1e-4) {
+        view.yaw += dyaw * ease(CAM_TAU)
+        busy = true
+      } else {
+        view.yaw = target.yaw
+      }
+      const dpitch = target.pitch - view.pitch
+      if (Math.abs(dpitch) > 1e-4) {
+        view.pitch += dpitch * ease(CAM_TAU)
+        busy = true
+      } else {
+        view.pitch = target.pitch
+      }
+      const dzoom = target.zoom - view.zoom
+      if (Math.abs(dzoom) > 1e-4) {
+        view.zoom += dzoom * ease(CAM_TAU)
+        busy = true
+      } else {
+        view.zoom = target.zoom
+      }
+
+      // --- hold the pixel under the wheel ---------------------------------
+      // Zooming about the cursor is a pan as well as a scale. `pan` is a plain
+      // screen translation, so one correction per frame is exact — there is no
+      // converging to do. Released once the zoom has settled, otherwise every
+      // later orbit would drag the anchor along with it.
+      const anchor = zoomAnchorRef.current
+      const vp = viewportRef.current
+      if (anchor && vp.width > 2 && vp.height > 2) {
+        const fitted = fitView(
+          geometry.bounds,
+          vp.width,
+          vp.height,
+          view.yaw,
+          view.pitch,
+          view.zoom,
+          panRef.current.x,
+          panRef.current.y,
+        )
+        const at = projectIn(fitted, anchor.world)
+        const dx = anchor.x - at.x
+        const dy = anchor.y - at.y
+        if (Math.abs(dx) > 0.02 || Math.abs(dy) > 0.02) {
+          const wantX = panRef.current.x + dx
+          const wantY = panRef.current.y + dy
+          const nextX = clampPan(wantX, vp.width)
+          const nextY = clampPan(wantY, vp.height)
+          // A clamped pan cannot hold the point, and insisting would keep this
+          // loop awake forever chasing a correction it is not allowed to make.
+          // Give the anchor up instead: the zoom continues, the pivot does not.
+          if (Math.abs(nextX - wantX) > 0.5 || Math.abs(nextY - wantY) > 0.5) {
+            zoomAnchorRef.current = null
+          } else {
+            panRef.current.x = nextX
+            panRef.current.y = nextY
+            busy = true
+          }
+        }
+        if (Math.abs(target.zoom - view.zoom) < 1e-3) zoomAnchorRef.current = null
+      }
+
+      // --- the drag marker's walk -----------------------------------------
+      const ghost = ghostRef.current
+      if (ghost) {
+        const at = dragEaseRef.current
+        if (!at) {
+          dragEaseRef.current = { ...ghost.anchor }
+        } else {
+          const gap = Math.hypot(
+            ghost.anchor.x - at.x,
+            ghost.anchor.y - at.y,
+            ghost.anchor.z - at.z,
+          )
+          if (gap > 0.004) {
+            const k = ease(DRAG_EASE_TAU)
+            at.x += (ghost.anchor.x - at.x) * k
+            at.y += (ghost.anchor.y - at.y) * k
+            at.z += (ghost.anchor.z - at.z) * k
+            busy = true
+          } else {
+            at.x = ghost.anchor.x
+            at.y = ghost.anchor.y
+            at.z = ghost.anchor.z
+          }
         }
       }
 
@@ -765,7 +894,7 @@ export function Scene3D({
       animRef.current = busy ? requestAnimationFrame(frame) : null
     }
     animRef.current = requestAnimationFrame(frame)
-  }, [schedulePaint])
+  }, [geometry, schedulePaint])
 
   useEffect(
     () => () => {
@@ -806,7 +935,9 @@ export function Scene3D({
 
     const view = viewRef.current
     const bounds = geometry.bounds
-    const frame = fitView(bounds, width, height, view.yaw, view.pitch, view.zoom)
+    viewportRef.current = { width, height }
+    const pan = panRef.current
+    const frame = fitView(bounds, width, height, view.yaw, view.pitch, view.zoom, pan.x, pan.y)
     // Remembered so pointer maths uses the frame that is actually on screen.
     frameRef.current = frame
     const { scale } = frame
@@ -1627,11 +1758,14 @@ export function Scene3D({
       ctx.fillText(label, p.x, p.y + 0.5)
     }
 
-    // The marker is where the hand is; the anchor is where the route starts.
-    // Keeping them apart is what lets a drag slide along a wall instead of
-    // snapping the marker onto cells.
-    const startAt = ghost?.which === 'start' ? ghost.point : start
-    const goalAt = ghost?.which === 'goal' ? ghost.point : goal
+    // The marker is drawn where the drop will land — the snapped cell — and the
+    // route starts from the same cell, so the picture and the result are one
+    // object. The finger that is doing the dragging is drawn as a thin dashed
+    // tie, which is the only place the two are allowed to disagree.
+    const eased = dragEaseRef.current
+    const dragged = ghost ? (eased ?? ghost.anchor) : null
+    const startAt = ghost?.which === 'start' && dragged ? dragged : start
+    const goalAt = ghost?.which === 'goal' && dragged ? dragged : goal
     const startAnchor = ghost?.which === 'start' ? ghost.anchor : start
     const goalAnchor = ghost?.which === 'goal' ? ghost.anchor : goal
 
@@ -1662,22 +1796,23 @@ export function Scene3D({
      * exactly like one on the floor in front of it. That is the whole reason a
      * drag in this view so often ends somewhere the hand did not mean. The plumb
      * line and the square it lands on add back the one direction the eye cannot
-     * judge: the marker's own vertical. */
+     * judge: the marker's own vertical.
+     *
+     * The marker itself sits on the snapped cell, so this block draws *around*
+     * the thing that will be committed rather than beside it. */
     if (ghost) {
-      const p = projectPoint(ghost.point)
-      const anchor = projectPoint(ghost.anchor)
-      const ground = projectPoint({ x: ghost.point.x, y: ghost.point.y, z: floorZ })
-      const anchorGround = projectPoint({ x: ghost.anchor.x, y: ghost.anchor.y, z: floorZ })
+      const anchorPoint = dragged ?? ghost.anchor
+      const p = projectPoint(anchorPoint)
+      const finger = projectPoint(ghost.point)
+      const ground = projectPoint({ x: anchorPoint.x, y: anchorPoint.y, z: floorZ })
       const lifted = Math.hypot(p.x - ground.x, p.y - ground.y) > 2.5
       // `sliding` is the finger over something the anchor had to leave; the
       // route is still real, so this is a hint, not an error. An infeasible
-      // search is an error, and the marker is where the hand is looking.
+      // search is an error.
       const bad = previewRef.current !== null && previewRef.current.path === null
       const tone = ghost.sliding || bad ? WARN : GUIDE
 
-      // Plumb line: the depth cue an axonometric view does not have. It drops
-      // from the marker, not from the anchor, because it is the marker whose
-      // altitude is being judged.
+      // Plumb line: the depth cue an axonometric view does not have.
       if (lifted) {
         ctx.save()
         ctx.setLineDash([4, 4])
@@ -1690,16 +1825,27 @@ export function Scene3D({
         ctx.restore()
       }
 
-      // When the anchor has slid away from the finger, say so with a short
-      // dashed tie between the two: the offset is the message.
-      if (ghost.sliding) {
+      // The finger. Always drawn, not only when the snap had to work: a
+      // control that follows the pointer exactly should still show what it is
+      // following, otherwise "the marker is lagging" is indistinguishable from
+      // "the marker is wrong".
+      const tieLength = Math.hypot(finger.x - p.x, finger.y - p.y)
+      if (tieLength > 3) {
         ctx.save()
         ctx.setLineDash([2, 3])
-        ctx.strokeStyle = WARN
+        ctx.strokeStyle = ghost.sliding || bad ? WARN : GUIDE
         ctx.lineWidth = 1
         ctx.beginPath()
         ctx.moveTo(p.x, p.y)
-        ctx.lineTo(anchor.x, anchor.y)
+        ctx.lineTo(finger.x, finger.y)
+        ctx.stroke()
+        ctx.restore()
+
+        ctx.save()
+        ctx.strokeStyle = ghost.sliding || bad ? WARN : GUIDE
+        ctx.lineWidth = 1
+        ctx.beginPath()
+        ctx.arc(finger.x, finger.y, 2.6, 0, TAU)
         ctx.stroke()
         ctx.restore()
       }
@@ -1722,7 +1868,7 @@ export function Scene3D({
       if (ghost.sliding || bad) ctx.setLineDash([3, 3])
       ctx.strokeStyle = tone
       ctx.lineWidth = 1.2
-      ctx.strokeRect(anchorGround.x - half, anchorGround.y - half * 0.62, half * 2, half * 1.24)
+      ctx.strokeRect(ground.x - half, ground.y - half * 0.62, half * 2, half * 1.24)
       ctx.restore()
     }
 
@@ -1753,14 +1899,7 @@ export function Scene3D({
     (screenX: number, screenY: number, planeZ = geometry.pickZ ?? geometry.bounds.min.z): Vec3 | null => {
       const frame = frameRef.current
       if (!frame) return null
-      const { bounds } = geometry
-      const wx = (screenX - frame.originX) / frame.scale
-      const wy = -(screenY - frame.originY) / frame.scale
-      // wy = ry·sp + z·cp  →  ry = (wy − z·cp) / sp
-      const ry = (wy - planeZ * frame.cp) / Math.max(1e-6, frame.sp)
-      const x = wx * frame.cy - ry * frame.sy
-      const y = wx * frame.sy + ry * frame.cy
-      return { x, y, z: planeZ }
+      return unprojectIn(frame, screenX, screenY, planeZ)
     },
     [geometry],
   )
@@ -1788,9 +1927,10 @@ export function Scene3D({
         if (x < 0 || y < 0 || z < 0 || x >= v.width || y >= v.height || z >= v.depth) return false
         return v.cells[z * planeOf + y * v.width + x] === 1
       }
-      // Unit vector pointing at the camera. Projecting along it leaves the screen
-      // position unchanged, so this walks the ray through the pixel.
-      const dir = { x: frame.cp * frame.sy, y: -frame.cp * frame.cy, z: frame.sp }
+      // Walk the pixel's own view ray. `viewRay` is derived from `projectIn` —
+      // the same equation `unprojectIn` solves — so marching along it cannot
+      // drift away from what the screen shows.
+      const dir = viewRay(frame)
       const step = v.spacing * 0.5
       let previous: Vec3 | null = null
       for (let i = -160; i <= 160; i += 1) {
@@ -1843,7 +1983,10 @@ export function Scene3D({
     const canvas = canvasRef.current
     canvas?.setPointerCapture?.(event.pointerId)
     const local = localOf(event.clientX, event.clientY)
-    const view = viewRef.current
+    // Orbit maths works off the *target*, not the drawn value: the drawn value
+    // is chasing the target, so anchoring the gesture to it would lose a
+    // fraction of every drag to the easing lag and then keep it forever.
+    const view = targetRef.current
 
     // Grabbing S or G outranks everything: in the 2D canvas the markers are
     // draggable at all times, and having to arm a mode first is exactly the kind
@@ -1873,9 +2016,13 @@ export function Scene3D({
     // A grab cancels any coasting: the scene must stop where the hand lands.
     spinRef.current = { yaw: 0, pitch: 0 }
     homeRef.current = false
+    // A new gesture owns the camera; a stale zoom pivot would fight it.
+    zoomAnchorRef.current = null
+    trailRef.current = [{ t: performance.now(), x: event.clientX, y: event.clientY }]
 
     if (grabbed) {
       ghostRef.current = { which: grabbed, point: grabbedAt, anchor: grabbedAt, sliding: false }
+      dragEaseRef.current = { ...grabbedAt }
       previewRef.current = null
       if (canvas) canvas.style.cursor = 'grabbing'
       schedulePaint()
@@ -1936,25 +2083,28 @@ export function Scene3D({
     drag.moved = Math.max(drag.moved, Math.hypot(dx, dy))
 
     if (drag.mode === 'orbit') {
-      const view = viewRef.current
+      const target = targetRef.current
       // "Grab the scene" semantics: drag right and the volume swings right, which
       // means yaw *decreases* — yaw is the camera's bearing around the scene, not
       // the scene's rotation about the camera.
-      view.yaw = drag.yaw - dx * 0.0072
-      view.pitch = clamp(drag.pitch + dy * 0.0052, PITCH_MIN, PITCH_MAX)
+      //
+      // Both go to the target, not to the drawn value. The picture then arrives
+      // a frame or two later, smoothly, and a stuttering pointer just means the
+      // target moves in steps the easing rounds off.
+      target.yaw = drag.yaw - dx * 0.0072
+      target.pitch = softPitch(drag.pitch + dy * 0.0052)
 
-      // Track velocity for the release coast. Smoothed, because a single
-      // pointermove can be a stutter rather than a flick.
+      // Samples for the release coast. Not a per-move velocity: a single
+      // pointermove can be a stutter, and averaging the last two deltas means a
+      // busy frame reads as "stopped" exactly when the flick was fastest.
       const now = performance.now()
-      const dt = Math.max(8, now - drag.lastT)
-      const stepYaw = (-(event.clientX - drag.lastX) * 0.0072) / dt
-      const stepPitch = ((event.clientY - drag.lastY) * 0.0052) / dt
-      spinRef.current.yaw = spinRef.current.yaw * 0.55 + stepYaw * 16.7 * 0.45
-      spinRef.current.pitch = spinRef.current.pitch * 0.55 + stepPitch * 16.7 * 0.45
+      const trail = trailRef.current
+      trail.push({ t: now, x: event.clientX, y: event.clientY })
+      while (trail.length > 2 && now - trail[0].t > FLICK_WINDOW_MS) trail.shift()
       drag.lastX = event.clientX
       drag.lastY = event.clientY
       drag.lastT = now
-      schedulePaint()
+      ensureAnimation()
       return
     }
 
@@ -1969,10 +2119,10 @@ export function Scene3D({
 
     // The anchor is the nearest legal cell near the finger. When there is none
     // — the hand is inside a column, or over a pocket the inflation sealed —
-    // the anchor holds at its last legal value: the marker keeps following the
-    // hand and the route keeps the last answer that was true. That is what
-    // sliding along a wall looks like; stopping dead is what it looked like
-    // before.
+    // the anchor holds at its last legal value: the marker stays on the last
+    // place that worked and the dashed tie grows to show by how much the hand
+    // is being overruled. That is what sliding along a wall looks like;
+    // stopping dead is what it looked like before.
     const slide = snapOnLayer(world, raw, 0.9, SLIDE_CELLS)
     if (slide) drag.anchor = slide
     ghostRef.current = {
@@ -1981,7 +2131,8 @@ export function Scene3D({
       anchor: drag.anchor,
       sliding: !slide,
     }
-    schedulePaint()
+    // The marker walks to the anchor; the finger point is only a hint.
+    ensureAnimation()
 
     // A move inside the same cell changes nothing the planner can see, so it
     // costs nothing: the marker still tracks the hand, the route holds still.
@@ -2004,15 +2155,28 @@ export function Scene3D({
     const local = localOf(event.clientX, event.clientY)
 
     if (drag.mode === 'orbit') {
-      // Only coast when the release was recent; holding still and letting go
-      // must not fling the scene.
-      const age = performance.now() - drag.lastT
-      const spin = spinRef.current
-      if (age > 100 || Math.hypot(spin.yaw, spin.pitch) < 0.0006) {
-        spinRef.current = { yaw: 0, pitch: 0 }
+      // Coast only if the hand was still moving when it let go. Velocity comes
+      // from a fixed time window (~90 ms), so it is the same number whether the
+      // last frame was 8 ms or 40 ms away — the old version divided by a single
+      // frame's dt, which is why the same flick could either die instantly or
+      // send the scene sailing.
+      const now = performance.now()
+      const trail = trailRef.current
+      const recent = trail.filter((sample) => now - sample.t <= FLICK_WINDOW_MS)
+      const first = recent[0]
+      const lastSample = recent[recent.length - 1]
+      if (first && lastSample && recent.length >= 2 && now - lastSample.t < 60) {
+        const span = Math.max(8, lastSample.t - first.t) / 1000
+        spinRef.current = {
+          // Capped: a fast flick across 400 px in 90 ms is 5.7 rad/s, which
+          // would spin the volume twice. The cap is what stops "it kept going".
+          yaw: clamp((-(lastSample.x - first.x) * 0.0072) / span, -6, 6),
+          pitch: clamp(((lastSample.y - first.y) * 0.0052) / span, -3, 3),
+        }
       } else {
-        ensureAnimation()
+        spinRef.current = { yaw: 0, pitch: 0 }
       }
+      ensureAnimation()
       hoverRef.current = onPick ? endpointAt(local.x, local.y) : null
       schedulePaint()
     }
@@ -2022,6 +2186,7 @@ export function Scene3D({
       // 3D search to produce an identical result, which reads as a hitch.
       if (drag.moved < 3) {
         ghostRef.current = null
+        dragEaseRef.current = null
         previewRef.current = null
         schedulePaint()
         return
@@ -2033,6 +2198,9 @@ export function Scene3D({
       const unreachable = previewRef.current !== null && previewRef.current.path === null
       const landed = unreachable ? drag.goodAnchor : drag.anchor
       ghostRef.current = null
+      // Park the eased marker on the cell it committed to, so the next grab
+      // starts where this one ended instead of walking across from the finger.
+      dragEaseRef.current = { ...landed }
       previewRef.current = null
       // Clear the ghost before the new result lands, otherwise the marker snaps
       // back to the old endpoint for the duration of the search.
@@ -2070,19 +2238,37 @@ export function Scene3D({
       // trackpad swipe should feel proportional, and repeated notches should
       // compound instead of adding a fixed step.
       const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? 100 : 1
-      const next = zoomTargetRef.current * Math.exp(-event.deltaY * unit * 0.0016)
-      zoomTargetRef.current = clamp(next, ZOOM_MIN, ZOOM_MAX)
+      const next = targetRef.current.zoom * Math.exp(-event.deltaY * unit * 0.0016)
+      const zoom = clamp(next, ZOOM_MIN, ZOOM_MAX)
+      if (Math.abs(zoom - targetRef.current.zoom) < 1e-6) return
+      targetRef.current.zoom = zoom
       homeRef.current = false
+
+      // Zoom toward the cursor, not toward the middle. Park the world point
+      // that is under the pointer on its own pixel and let the frame loop keep
+      // it there while the scale moves: what you are looking at stays put, and
+      // the thing you are zooming in on is the thing you pointed at.
+      const rect = canvas.getBoundingClientRect()
+      const frame = frameRef.current
+      if (frame) {
+        const x = event.clientX - rect.left
+        const y = event.clientY - rect.top
+        const planeZ = geometry.pickZ ?? geometry.bounds.min.z
+        zoomAnchorRef.current = { x, y, world: unprojectIn(frame, x, y, planeZ) }
+      }
       ensureAnimation()
     }
     canvas.addEventListener('wheel', onWheel, { passive: false })
     return () => canvas.removeEventListener('wheel', onWheel)
-  }, [ensureAnimation])
+  }, [ensureAnimation, geometry])
 
   const zoomBy = useCallback(
     (factor: number) => {
-      zoomTargetRef.current = clamp(zoomTargetRef.current * factor, ZOOM_MIN, ZOOM_MAX)
+      targetRef.current.zoom = clamp(targetRef.current.zoom * factor, ZOOM_MIN, ZOOM_MAX)
       homeRef.current = false
+      // The +/− buttons and the double-click reset have no cursor to zoom
+      // toward; drop the pivot so the frame does not get dragged to a stale one.
+      zoomAnchorRef.current = null
       ensureAnimation()
     },
     [ensureAnimation],
@@ -2091,6 +2277,9 @@ export function Scene3D({
   /** Home view. Also bound to double-click, the gesture people try first. */
   const resetView = useCallback(() => {
     spinRef.current = { yaw: 0, pitch: 0 }
+    // Home owns the framing: a zoom pivot left over from the wheel would drag
+    // the picture sideways while the pan is trying to return to centre.
+    zoomAnchorRef.current = null
     homeRef.current = true
     ensureAnimation()
   }, [ensureAnimation])

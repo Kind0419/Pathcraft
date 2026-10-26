@@ -20,6 +20,20 @@ export type CardId =
   | 'swarmWidth'
   | 'iterations'
   | 'incremental'
+  /**
+   * Algorithm-internal knobs. These exist because the sampling and
+   * metaheuristic solvers had their step sizes, biases and rates hard-coded, so
+   * "the algorithm" was one fixed point rather than a family — you could switch
+   * planners but not tune one. Each is read through `tunedValue`, which means it
+   * only takes effect when it is actually in the recipe.
+   */
+  | 'sampleStep'
+  | 'goalBias'
+  | 'rewireRadius'
+  | 'connectRadius'
+  | 'evaporate'
+  | 'beta'
+  | 'mutate'
 
 export type CardGroup = 'search' | 'cost' | 'constraint' | 'bridge'
 

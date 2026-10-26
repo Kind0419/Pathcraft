@@ -390,6 +390,11 @@ export function solverFor(cards: CardsState): SolverSpec {
 /**
  * New cards only make sense for a subset of solvers. Everything else is
  * driven by the `ignores` list.
+ *
+ * The algorithm-internal knobs are narrowed here rather than added to every
+ * solver's `ignores` array: they are not "this solver loses the ability", they
+ * are "this solver does not have that parameter at all", and writing them once
+ * keeps the table honest.
  */
 export function cardApplies(cardId: CardId, solver: SolverSpec): boolean {
   if (cardId === 'swarmWidth') {
@@ -401,6 +406,13 @@ export function cardApplies(cardId: CardId, solver: SolverSpec): boolean {
   if (cardId === 'incremental') {
     return solver.id === 'dstar'
   }
+  if (cardId === 'sampleStep' || cardId === 'goalBias') {
+    return solver.id === 'rrt' || solver.id === 'rrtstar'
+  }
+  if (cardId === 'rewireRadius') return solver.id === 'rrtstar'
+  if (cardId === 'connectRadius') return solver.id === 'prm'
+  if (cardId === 'evaporate' || cardId === 'beta') return solver.id === 'aco'
+  if (cardId === 'mutate') return solver.id === 'ga'
   if (cardId === 'strategy') return true
   return !solver.ignores.includes(cardId)
 }
@@ -415,8 +427,11 @@ export function ignoredCards(solver: SolverSpec): CardId[] {
  */
 export function optionalCards(solver: SolverSpec): CardId[] {
   if (solver.id === 'beam') return ['swarmWidth']
-  if (solver.id === 'aco') return ['swarmWidth', 'iterations']
-  if (solver.id === 'ga') return ['swarmWidth', 'iterations']
+  if (solver.id === 'aco') return ['swarmWidth', 'iterations', 'evaporate', 'beta']
+  if (solver.id === 'ga') return ['swarmWidth', 'iterations', 'mutate']
   if (solver.id === 'dstar') return ['incremental']
+  if (solver.id === 'rrt') return ['sampleStep', 'goalBias']
+  if (solver.id === 'rrtstar') return ['sampleStep', 'goalBias', 'rewireRadius']
+  if (solver.id === 'prm') return ['connectRadius']
   return []
 }

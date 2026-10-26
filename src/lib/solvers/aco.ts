@@ -46,6 +46,13 @@ export function planAco(
   const dirs = cards.diagonal.enabled ? ALL_DIRS : ORTHO_DIRS
   const ants = Math.max(4, Math.round(tunedValue(cards, order, 'swarmWidth', 26)))
   const rounds = Math.max(4, Math.round(tunedValue(cards, order, 'iterations', 34)))
+  // Evaporation and the heuristic exponent. These two decide whether the
+  // colony converges on one corridor or keeps exploring, so leaving them at
+  // the module constants meant "ACO" was one fixed animal. Clamped rather than
+  // free: rho = 1 wipes the trail every round, beta = 0 has no goal term at
+  // all, and both read as "the algorithm is broken" rather than "tuned".
+  const rho = Math.min(0.85, Math.max(0.02, tunedValue(cards, order, 'evaporate', RHO)))
+  const beta = Math.min(9, Math.max(0, tunedValue(cards, order, 'beta', BETA)))
   const maxSteps = Math.round((map.width + map.height) * 1.9)
   const rng = makeRng(0x9e3779b9)
   const tau = new Float32Array(size).fill(0.6)
@@ -130,7 +137,7 @@ export function planAco(
             const toGoal = Math.hypot(cx - map.goal.x, cy - map.goal.y)
             const attraction = 1 / (toGoal + 0.6)
             const weight =
-              Math.pow(tau[option.cell] + EPS, ALPHA) * Math.pow(attraction, BETA)
+              Math.pow(tau[option.cell] + EPS, ALPHA) * Math.pow(attraction, beta)
             weights.push(weight)
             total += weight
           }
@@ -157,7 +164,7 @@ export function planAco(
       for (const cell of tour.path) tau[cell] += deposit
     }
     for (let i = 0; i < size; i += 1) {
-      tau[i] = Math.max(0.02, tau[i] * (1 - RHO))
+      tau[i] = Math.max(0.02, tau[i] * (1 - rho))
     }
 
     let roundBest: { path: number[]; cost: number } | null = null
@@ -192,12 +199,19 @@ export function planAco(
   const trace = {
     kind: 'meta' as const,
     loopLabel: `FOR round < ${rounds}`,
-    init: [`τ ← 0.6 · ants = ${ants}`, '候选宽度 m 与迭代轮数 T 来自装配表'],
-    loop: ['每只蚂蚁按 τ^α·η^β 抽样前进', '到达终点 → 记录路径长度', '蒸发 τ ← 0.72τ，再按 Q/L 沉积'],
+    init: [
+      `τ ← 0.6 · ants = ${ants}`,
+      `β = ${beta.toFixed(2)} · ρ = ${rho.toFixed(2)}`,
+    ],
+    loop: [
+      '每只蚂蚁按 τ^α·η^β 抽样前进',
+      '到达终点 → 记录路径长度',
+      `蒸发 τ ← ${(1 - rho).toFixed(2)}τ，再按 Q/L 沉积`,
+    ],
     terminate: best.path.length > 0 ? ['return bestTour'] : ['return ∅'],
   }
 
-  const note = `ACO 用信息素概率游走：${ants} 只蚂蚁 × ${rounds} 轮，结果不保证最优；转角约束不适用。`
+  const note = `ACO 用信息素概率游走：${ants} 只蚂蚁 × ${rounds} 轮，β = ${beta.toFixed(2)}，ρ = ${rho.toFixed(2)}；结果不保证最优，转角约束不适用。`
 
   if (best.path.length === 0) {
     return buildFailure({

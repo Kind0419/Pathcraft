@@ -8,7 +8,7 @@ import type { CardId, CardsState, GridMap, PlanResult, Point } from '../types'
 import { pointFree, segmentClear, segmentCost } from '../core/costs'
 import { lengthScale } from '../core/costs'
 import { distance, makeRng } from '../core/geometry'
-import { buildFailure, buildSuccess } from './shared'
+import { buildFailure, buildSuccess, tunedValue } from './shared'
 import type { SolverSpec } from './registry'
 
 interface TreeNode {
@@ -33,7 +33,14 @@ function rrt(
   const startedAt = performance.now()
   const start = { x: map.start.x + 0.5, y: map.start.y + 0.5 }
   const goal = { x: map.goal.x + 0.5, y: map.goal.y + 0.5 }
-  const step = 1.7
+  // Growth distance and goal bias were constants here. They are the two knobs
+  // that decide *what kind of tree* this is — a sprawling uniform one or a
+  // tunnel toward the goal — so they belong to the recipe, not to the source.
+  const step = Math.max(0.2, tunedValue(cards, order, 'sampleStep', 1.7))
+  const goalBias = Math.min(0.95, Math.max(0, tunedValue(cards, order, 'goalBias', 0.12)))
+  // Rewiring exists only in the * variant; in plain RRT this is never read
+  // because `optionalCards` and `cardApplies` keep the card off the recipe.
+  const rewireRadius = step * Math.max(0.01, tunedValue(cards, order, 'rewireRadius', 2.6))
   const maxSamples = sampleBudget(cards, optimize ? 1900 : 1400)
   const nodes: TreeNode[] = [{ ...start, parent: -1, cost: 0 }]
   const events: PlanResult['events'] = [
@@ -47,7 +54,6 @@ function rrt(
     },
   ]
   const rng = makeRng(0x51ed270b)
-  const goalBias = 0.12
   let goalIndex = -1
 
   for (let iteration = 0; iteration < maxSamples && goalIndex < 0; iteration += 1) {
@@ -89,7 +95,6 @@ function rrt(
     let parent = nearest
     let bestCost = from.cost + segmentCost(map, cards, from, next)
     if (optimize) {
-      const rewireRadius = step * 2.6
       for (let i = 0; i < nodes.length; i += 1) {
         if (i === nearest) continue
         const candidate = nodes[i]
@@ -114,7 +119,6 @@ function rrt(
     })
 
     if (optimize) {
-      const rewireRadius = step * 2.6
       for (let i = 0; i < nodes.length - 1; i += 1) {
         const node = nodes[i]
         if (node.parent < 0) continue
@@ -150,8 +154,17 @@ function rrt(
   const trace = {
     kind: 'sampling' as const,
     loopLabel: 'WHILE samples < N',
-    init: ['tree ← {S}', 'q_rand ← sampleFreeSpace()'],
-    loop: ['q_near ← nearest(tree, q_rand)', 'q_new ← steer(q_near, q_rand)', 'collision(q_new)? 丢弃'],
+    // The numbers are printed from the values actually in use, so the panel
+    // cannot claim a step size the search is not walking.
+    init: [`tree ← {S} · Δq = ${step.toFixed(2)}`, `p_goal = ${goalBias.toFixed(2)}`],
+    loop: optimize
+      ? [
+          'q_near ← nearest(tree, q_rand)',
+          'q_new ← steer(q_near, q_rand)',
+          'collision(q_new)? 丢弃',
+          `rewire(r = ${rewireRadius.toFixed(2)})`,
+        ]
+      : ['q_near ← nearest(tree, q_rand)', 'q_new ← steer(q_near, q_rand)', 'collision(q_new)? 丢弃'],
     terminate: goalIndex >= 0 ? ['return reconstruct(tree, G)'] : ['return ∅'],
   }
 
@@ -233,15 +246,25 @@ function prm(
   }
 
   const adjacency: Array<Array<{ to: number; cost: number }>> = nodes.map(() => [])
+  // Longest edge the roadmap may contain. Unlimited unless the card is in the
+  // recipe, so "PRM as it was" is still reachable.
+  const maxEdge = tunedValue(cards, order, 'connectRadius', Number.POSITIVE_INFINITY)
+  const radiusGraph = Number.isFinite(maxEdge)
   let edges = 0
   for (let i = 0; i < nodes.length; i += 1) {
     const nearest: Array<{ index: number; distance: number }> = []
     for (let j = 0; j < nodes.length; j += 1) {
       if (i === j) continue
-      nearest.push({ index: j, distance: distance(nodes[i], nodes[j]) })
+      const gap = distance(nodes[i], nodes[j])
+      if (gap > maxEdge) continue
+      nearest.push({ index: j, distance: gap })
     }
     nearest.sort((a, b) => a.distance - b.distance)
-    const limit = Math.min(9, nearest.length)
+    // A radius graph connects to *everything* inside the radius; the nine-nearest
+    // cap only exists to bound the default (unbounded-radius) case. Keeping the
+    // cap while the card is in play would make the slider saturate at whatever
+    // radius first admits nine neighbours — a slider that stops moving halfway.
+    const limit = radiusGraph ? nearest.length : Math.min(9, nearest.length)
     for (let k = 0; k < limit; k += 1) {
       const j = nearest[k].index
       if (!segmentClear(map, cards, nodes[i], nodes[j])) continue
@@ -280,7 +303,12 @@ function prm(
   const trace = {
     kind: 'sampling' as const,
     loopLabel: 'BUILD → QUERY',
-    init: ['V ← {S, G} ∪ sampleFreeSpace(n)', 'E ← k-nearest 可见边'],
+    init: [
+      'V ← {S, G} ∪ sampleFreeSpace(n)',
+      Number.isFinite(maxEdge)
+        ? `E ← 可见边 · ‖e‖ ≤ ${maxEdge.toFixed(1)}`
+        : 'E ← k-nearest 可见边',
+    ],
     loop: ['Dijkstra(V, E)', '按代价松弛'],
     terminate: ['return path(S → G)'],
   }
@@ -336,6 +364,12 @@ function visibilityGraph(
   spec: SolverSpec,
 ): PlanResult {
   const startedAt = performance.now()
+  // Extra "across the open floor" links per vertex, on top of the 8-neighbour
+  // grid edges. Deliberately *not* a card: on an 8-connected grid a staircase
+  // of diagonals already costs exactly what one long edge costs, so this number
+  // changes how the path is drawn but never how long it is — which is the
+  // definition of a decorative parameter.
+  const extraLinks = 5
   const nodes: Point[] = []
   const indexByCell = new Int32Array(map.width * map.height).fill(-1)
   let startIndex = -1
@@ -356,7 +390,7 @@ function visibilityGraph(
     kind: 'sampling' as const,
     loopLabel: 'BUILD → QUERY',
     init: ['V ← 所有可通行格中心', 'E ← 互视顶点连线'],
-    loop: ['邻接 8 邻域', '再连 5 个最近可见点', 'Dijkstra(V, E)'],
+    loop: ['邻接 8 邻域', `再连 ${extraLinks} 个最近可见点`, 'Dijkstra(V, E)'],
     terminate: ['return path(S → G)'],
   }
 
@@ -411,14 +445,14 @@ function visibilityGraph(
   }
 
   if (nodes.length <= 1000) {
-    for (let i = 0; i < nodes.length; i += 1) {
+    for (let i = 0; i < nodes.length && extraLinks > 0; i += 1) {
       const nearest: Array<{ index: number; distance: number }> = []
       for (let j = 0; j < nodes.length; j += 1) {
         if (i === j) continue
         nearest.push({ index: j, distance: distance(nodes[i], nodes[j]) })
       }
       nearest.sort((a, b) => a.distance - b.distance)
-      for (let k = 0; k < Math.min(5, nearest.length); k += 1) {
+      for (let k = 0; k < Math.min(extraLinks, nearest.length); k += 1) {
         link(i, nearest[k].index)
       }
     }

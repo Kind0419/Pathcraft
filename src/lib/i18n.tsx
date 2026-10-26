@@ -435,6 +435,51 @@ const EN: Record<string, string> = {
   '每轮保留的候选数': 'Candidates kept per layer',
   '随机搜索的代数': 'Generations of the stochastic search',
   '复用上一轮的距离场': 'Reuse the distance field from the previous run',
+
+  // algorithm-internal knobs
+  '采样步长': 'Sample step',
+  '每次生长向样本推进的距离': 'How far the tree reaches toward a sample',
+  '× Δq': '× Δq',
+  '邻域 · 树的生长步长': 'Neighborhood · tree growth step',
+  '采样树的枝长': 'Length of the tree branches',
+  '每次向随机样本推进多远。步长大则节点少、收敛快、路径糙；步长小则树密、路径顺、节点数暴涨。到达终点需要一步之内能连上，所以步长过小会明显变慢。':
+    'How far each extension reaches. A long step means fewer nodes, faster convergence and a coarser path; a short one gives a dense tree, a smoother path and far more nodes. The goal is only reachable when it falls within one step, so a very short step is much slower.',
+  '目标偏置': 'Goal bias',
+  '直接朝终点采样的概率': 'Chance of sampling the goal directly',
+  '邻域 · 采样分布偏置': 'Neighborhood · sample distribution',
+  '朝终点的生长方向': 'Growth direction toward the goal',
+  '以多大概率直接拿终点当样本。0 是纯均匀采样，树会往四面乱长；调高会明显更快找到终点，但树会变成一条走廊，绕障能力下降，凹形场景里更容易卡住。':
+    'How often the goal itself is used as the sample. At 0 the tree sprawls in every direction; raising it finds the goal much faster but turns the tree into a corridor, so it detours around obstacles worse and gets trapped in concave pockets more often.',
+  '重连半径': 'Rewire radius',
+  'RRT* 邻域半径（步长的倍数）': 'RRT* neighborhood radius, in steps',
+  '邻域 · 选父与重连范围': 'Neighborhood · parent choice and rewiring',
+  '样本周围的邻域圆': 'Neighborhood circle around a sample',
+  '每次插入新节点时，在这个半径内找更便宜的父节点，并尝试把半径内的老节点接到新节点上。半径为 0 就退化成 RRT；半径越大路径越短，但每次插入的代价按邻域内节点数线性增长。':
+    'When a node is inserted, a cheaper parent is looked for inside this radius and nearby nodes are re-parented through it. A radius of 0 degenerates to plain RRT; a larger one shortens the path, at a per-insertion cost that grows with the nodes inside the radius.',
+  '连边半径': 'Connect radius',
+  'PRM 采样点之间允许的最长边': 'Longest edge allowed between PRM samples',
+  '邻域 · 路线图连边': 'Neighborhood · roadmap edges',
+  '路线图上的长边': 'The long edges of the roadmap',
+  '只保留长度不超过这个值的可见边（本来还受最近 9 个点的限制）。调大能连出更直接的路、但边数增长；调小路线图会碎成孤岛，起点到终点直接无解——那不是 bug，是半径不够。':
+    'Keeps only visible edges no longer than this (on top of the usual nine-nearest cap). Larger connects more directly but grows the edge count; smaller shatters the roadmap into islands and start-to-goal becomes infeasible — not a bug, just not enough radius.',
+  '信息素挥发': 'Pheromone evaporation',
+  '每轮蒸发的比例': 'Fraction lost each round',
+  '代价 · 信息素更新': 'Cost · pheromone update',
+  '信息素场的扩散': 'Spread of the pheromone field',
+  '挥发决定旧经验多快失效。ρ 小则信息素长期累积、容易锁死在一条次优走廊上；ρ 大则每轮几乎从零开始，退化成随机游走。这个值直接改变蚂蚁找到的路线，不只是收敛快慢。':
+    'Evaporation decides how fast old experience stops counting. A small ρ accumulates pheromone and can lock the colony onto a suboptimal corridor; a large one all but resets every round, degenerating into a random walk. It changes which route the ants find, not just how fast they converge.',
+  '启发权重': 'Heuristic weight',
+  '蚁群里“离终点多近”的指数': 'Exponent on distance-to-goal in the colony',
+  '代价 · 转移概率': 'Cost · transition probability',
+  '蚂蚁走向的集中度': 'How concentrated the ants\u2019 choices are',
+  'β = 0 时蚂蚁完全跟着信息素走，开局等于乱逛；β 越大越贪心，会一头扎进凹槽。它和信息素挥发是一对：β 高、ρ 低最容易把整群蚂蚁带进同一条死路。':
+    'At β = 0 the ants follow pheromone alone, which early on is wandering; higher β is greedier and drives them straight into notches. It pairs with evaporation: high β plus low ρ is the quickest way to funnel the whole colony into one dead end.',
+  '变异率': 'Mutation rate',
+  '基因位被扰动的概率': 'Chance a gene is perturbed',
+  '邻域 · 种群变异': 'Neighborhood · population mutation',
+  '逐代偏移的路径点': 'Waypoints drifting across generations',
+  '越低越依赖交叉、收敛快但容易早熟卡在局部；越高种群越散，探索强但收敛慢。0 时种群只能靠交叉重组已有基因，几代之后就会全部同质。':
+    'Lower leans on crossover: fast, and prone to premature convergence. Higher keeps the population diverse: more exploration, slower convergence. At 0 the population can only recombine what it already has and homogenises within a few generations.',
 }
 
 const ZH_REPLACEMENTS: Array<[RegExp, string]> = [

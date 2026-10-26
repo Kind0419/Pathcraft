@@ -39,6 +39,11 @@ export function planGa(
   const startedAt = performance.now()
   const popSize = Math.max(6, Math.round(tunedValue(cards, order, 'swarmWidth', 30)))
   const generations = Math.max(4, Math.round(tunedValue(cards, order, 'iterations', 32)))
+  // How often a gene is actually perturbed when mutation is attempted. At 0 the
+  // population can only recombine what it already has, so it homogenises in a
+  // few generations and stops improving; at 1 it never converges. 0.55 is the
+  // constant this used to be, kept as the default so existing runs reproduce.
+  const mutate = Math.min(1, Math.max(0, tunedValue(cards, order, 'mutate', 0.55)))
   const rng = makeRng(0x1f83d9ab)
 
   const start: Point = { x: map.start.x + 0.5, y: map.start.y + 0.5 }
@@ -149,7 +154,7 @@ export function planGa(
       }
       const mutations = 1 + Math.floor(rng() * 2)
       for (let m = 0; m < mutations; m += 1) {
-        if (rng() > 0.55) continue
+        if (rng() > mutate) continue
         const g = Math.floor(rng() * geneCount)
         genes[g] += gauss() * 0.65
       }
@@ -169,12 +174,16 @@ export function planGa(
     kind: 'meta' as const,
     loopLabel: `FOR gen < ${generations}`,
     init: [`P ← ${popSize} 条路径 · 基因 = ${waypoints} 个偏移`, '适应度 = 路径代价 + 碰撞罚分'],
-    loop: ['锦标赛选择 → 混合交叉', '变异：抖动一个路径点', '精英保留 2 条'],
+    loop: [
+      '锦标赛选择 → 混合交叉',
+      `变异：p_mut = ${mutate.toFixed(2)} 抖动一个基因`,
+      '精英保留 2 条',
+    ],
     terminate: ['return argmin fitness'],
   }
 
   const feasible = bestSoFar.path.length > 1 && bestSoFar.fitness < 6000
-  const note = `GA 只优化 ${waypoints} 个路径点的位置：${popSize} 个体 × ${generations} 代，不保证最优；启发式、邻域与转角约束不适用。`
+  const note = `GA 只优化 ${waypoints} 个路径点的位置：${popSize} 个体 × ${generations} 代，p_mut = ${mutate.toFixed(2)}，不保证最优；启发式、邻域与转角约束不适用。`
 
   if (!feasible) {
     return buildFailure({
