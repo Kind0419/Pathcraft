@@ -115,12 +115,13 @@ export const CARD_DEFS: CardDef[] = [
       'D* Lite',
       '蚁群 ACO',
       '遗传算法',
+      'EGO-Planner',
     ],
     formula: 'priority(n) = g + h · w_h   |   g   |   h   |   FIFO   |   LIFO   |   jump   |   τ^α·η^β',
     compiles: '排序键 · 队列优先级 / 连续采样 / 信息素',
     visual: '波前扩散 / 采样树 / 信息素场',
     detail:
-      '图搜索按队列优先级扩张；JPS 跳对称段；IDA* 逐轮加深；双向 A* 两端相遇；Beam 每层裁剪；D* Lite 从终点反算并可复用；RRT / RRT* / PRM / 可见性图在连续空间采样；蚁群与遗传算法靠随机迭代改进。切换算法后，装配表里不适用于该算法的卡片会标注“不适用”。',
+      '图搜索按队列优先级扩张；JPS 跳对称段；IDA* 逐轮加深；双向 A* 两端相遇；Beam 每层裁剪；D* Lite 从终点反算并可复用；RRT / RRT* / PRM / 可见性图在连续空间采样；蚁群与遗传算法靠随机迭代改进；EGO-Planner 不搜索，它拉一条三次 B 样条。切换算法后，装配表里不适用于该算法的卡片会标注“不适用”。',
   },
   {
     id: 'heuristic',
@@ -702,6 +703,83 @@ export const CARD_DEFS: CardDef[] = [
     visual: '逐代偏移的路径点',
     detail:
       '越低越依赖交叉、收敛快但容易早熟卡在局部；越高种群越散，探索强但收敛慢。0 时种群只能靠交叉重组已有基因，几代之后就会全部同质。',
+  },
+  /* ---------------------------------------------------------------- EGO ---
+   *
+   * Three coefficients of the objective, not three behaviours. `s_f` changes
+   * which samples count as stuck, `λ_s` changes how much shape costs against
+   * distance, and `v_max` never touches the geometry at all — it only stretches
+   * Δt. That last one is the card that proves the point of the film: the same
+   * curve, a longer timetable.
+   */
+  {
+    id: 'egoSafety',
+    title: '安全间距',
+    subtitle: '离障碍多近就算卡住',
+    param: 's_f',
+    stage: 'filter',
+    group: 'constraint',
+    kind: 'radius',
+    icon: 'shield',
+    accent: '#a45f43',
+    defaultEnabled: false,
+    defaultValue: 2,
+    defaultInRecipe: false,
+    min: 0,
+    max: 6,
+    step: 0.25,
+    unit: '格',
+    formula: 'c_ij = d_ij − s_f',
+    compiles: '代价项 · 触发 J_c 的门槛',
+    visual: '被推开的曲线',
+    detail:
+      '只有离障碍小于 s_f 的采样点才算"卡住"，才会去找逃逸方向。调大之后曲线整体离墙更远，代价是绕得更长；调到 0 就只处理真正穿进障碍的点。',
+  },
+  {
+    id: 'egoSmooth',
+    title: '平滑权重',
+    subtitle: 'J_s 相对 J_c 的份量',
+    param: 'λ_s',
+    stage: 'cost',
+    group: 'cost',
+    kind: 'weight',
+    icon: 'smooth',
+    accent: '#9a7637',
+    defaultEnabled: false,
+    defaultValue: 6,
+    defaultInRecipe: false,
+    unit: '',
+    min: 0.2,
+    max: 30,
+    step: 0.5,
+    formula: 'J = λ_s·J_s + λ_c·J_c',
+    compiles: '代价项 · 形状 vs 距离',
+    visual: '拐角的软硬',
+    detail:
+      'λ_s 大，曲线更愿意绕远换平顺；λ_s 小，它宁可贴着拐角抄近路。这不是"好/坏"开关：无人机要的是前者，扫地机要的是后者。',
+  },
+  {
+    id: 'egoSpeed',
+    title: '最大速度',
+    subtitle: '时间重分配的开关',
+    param: 'v_max',
+    stage: 'filter',
+    group: 'constraint',
+    kind: 'weight',
+    icon: 'route',
+    accent: '#a45f43',
+    defaultEnabled: false,
+    defaultValue: 2.4,
+    defaultInRecipe: false,
+    unit: '格/秒',
+    min: 0.4,
+    max: 6,
+    step: 0.1,
+    formula: 'Δt ← Δt · max(‖v‖/v_max, ‖a‖/a_max)',
+    compiles: '可行性 · 拉长时间轴',
+    visual: '速度箭头整体变短',
+    detail:
+      '唯一一个完全不改路线的参数：调小之后同一条曲线、同一组控制点，只是 Δt 变长、速度箭头集体变短。它对应论文里的 J_d，在梯度循环之外求解。',
   },
 ]
 

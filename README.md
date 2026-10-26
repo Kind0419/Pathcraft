@@ -7,7 +7,7 @@
 
 [Live Demo](https://Kind0419.github.io/Pathcraft/) · [GitHub](https://github.com/Kind0419/Pathcraft) · [更新日志](CHANGELOG.md) · [MIT License](LICENSE)
 
-> Status: `0.10.0` · 2D grid + continuous + 3D voxel / field · light / dark · React + TypeScript + Canvas
+> Status: `0.11.0` · 2D grid + continuous + 3D voxel / field · light / dark · React + TypeScript + Canvas
 
 [![Pathcraft interactive demo](https://Kind0419.github.io/Pathcraft/preview.gif?v=5)](https://Kind0419.github.io/Pathcraft/)
 
@@ -21,10 +21,13 @@ Pathcraft 是一个运行在浏览器里的路径规划实验台：**2D 栅格**
 
 它把路径规划拆成可组合的参数模块：
 
-- **搜索**：17 种策略 —— A*、Dijkstra、贪心、BFS、DFS、加权 A*、JPS、IDA*、双向 A*、Beam、D* Lite；RRT、RRT*、PRM、可见性图；蚁群 ACO、遗传算法
+- **搜索**：18 种策略，三个族 ——
+  **搜格子**：A*、Dijkstra、贪心、BFS、DFS、加权 A*、JPS、IDA*、双向 A*、Beam、D* Lite；
+  **撒点**：RRT、RRT*、PRM、可见性图；**优化曲线**：EGO-Planner；以及蚁群 ACO、遗传算法
 - **代价**：间隙、转角、长度、斜向偏好、目标容差
 - **约束**：安全膨胀、最大转角、禁止掉头、切角、扩展预算
-- **算法内部参数**：采样步长、目标偏置、重连半径、PRM 连边半径、蚁群信息素挥发与启发指数、遗传算法变异率 —— 只出现在真正用得上它的算法上，而且每一个都真的改变求解结果（有回归脚本逐个验证）
+- **算法内部参数**：采样步长、目标偏置、重连半径、PRM 连边半径、蚁群信息素挥发与启发指数、遗传算法变异率；
+  EGO 的安全间距 s_f、平滑权重 λ_s、最大速度 v_max —— 只出现在真正用得上它的算法上，而且每一个都真的改变求解结果（有回归脚本逐个验证）
 - **后处理**：可见性拉直、Chaikin 平滑（轮数）、路径抽稀（容差）
 
 在左侧组件库选择模块，右侧装配表调整数值，中间实时观察搜索波前、最终路径和上一版路径。流程页把当前回放帧映射到实际执行分支，并显示队列、扩展节点与卡片编译位点。选择 RRT / RRT* / PRM / 可见性图时，画布切换到连续 2D 空间，路径以光滑折线输出。
@@ -85,6 +88,10 @@ Pathcraft 是一个运行在浏览器里的路径规划实验台：**2D 栅格**
 - **手感**：拖动带惯性，松手后会顺着方向滑一小段再停；滚轮缩放是连续缓动的，不是一格一跳；双击复位视角会走最短路径转回去（转过好几圈之后也不会倒着转两圈）
 - **帧循环**：相机状态放在 ref 里，由 requestAnimationFrame 驱动重绘，拖动时一次 React 渲染都不发生——这是"跟手"的前提
 - **采样规划**：RRT / RRT* 在三维里同样可用——树长在连续坐标里，栅格只当作碰撞检测的预言机
+- **轨迹优化**：EGO-Planner 同样在三维里可用，而且它本来就是为三维写的。它不搜格子，
+  而是把一条三次 B 样条按三个代价拉出来：平滑（控制点差分的平方）、碰撞（对撞进障碍的
+  控制点建 `{p, v}` 锚点，代价是分段三次函数）、可行（不改形状，只把 Δt 拉长）。
+  碰撞项只问真的卡住的那几个点，不建距离场——这是它和 ESDF 那一套的全部区别
 
 ![Pathcraft 3D voxel planning](https://Kind0419.github.io/Pathcraft/preview-3d.png?v=2)
 

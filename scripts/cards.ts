@@ -43,6 +43,11 @@ const TRIALS: Trial[] = [
   { card: 'evaporate', solver: 'aco', values: [0.05, 0.28, 0.7], map: 2 },
   { card: 'beta', solver: 'aco', values: [0, 3, 7], map: 2 },
   { card: 'mutate', solver: 'ga', values: [0, 0.55, 1] },
+  // EGO's three knobs. s_f and λ_s change the curve itself; v_max changes only
+  // the timetable, which is why the harness compares `duration` as well.
+  { card: 'egoSafety', solver: 'ego', values: [0, 2, 4], map: 2 },
+  { card: 'egoSmooth', solver: 'ego', values: [0.2, 1, 8], map: 2 },
+  { card: 'egoSpeed', solver: 'ego', values: [0.8, 2.4, 5], map: 2 },
 ]
 
 function run(card: CardId, solver: SolverId, value: number, mapIndex = 0) {
@@ -59,6 +64,7 @@ function run(card: CardId, solver: SolverId, value: number, mapIndex = 0) {
     expanded: result.expanded,
     rounds: result.rounds ?? 0,
     waypoints: result.waypoints,
+    duration: result.duration ?? 0,
     open: result.openAtEnd,
     ms: result.solveTime,
   }
@@ -70,7 +76,8 @@ function same(a: ReturnType<typeof run>, b: ReturnType<typeof run>) {
     Math.abs(a.length - b.length) < 1e-6 &&
     a.expanded === b.expanded &&
     a.rounds === b.rounds &&
-    a.waypoints === b.waypoints
+    a.waypoints === b.waypoints &&
+    Math.abs(a.duration - b.duration) < 1e-6
   )
 }
 
@@ -96,6 +103,7 @@ for (const trial of TRIALS) {
         `  expanded ${String(o.expanded).padStart(6)}` +
         `  rounds ${String(o.rounds).padStart(3)}` +
         `  pts ${String(o.waypoints).padStart(3)}` +
+        `  t ${o.duration.toFixed(2)}s` +
         `  ${o.ms.toFixed(0)} ms`,
     )
   }

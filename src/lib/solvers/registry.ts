@@ -30,6 +30,7 @@ export type SolverId =
   | 'dstar'
   | 'aco'
   | 'ga'
+  | 'ego'
 
 export interface SolverSpec {
   id: SolverId
@@ -56,9 +57,10 @@ export interface SolverSpec {
 /**
  * Which solvers can run outside a 2D cell grid.
  *
- * Only the six plain graph engines (they go through the dimension-agnostic
- * `searchLattice`) and the two sampling planners. Everything else is a 2D
- * implementation on purpose: JPS's pruning, IDA*'s move ordering, D* Lite's
+ * The six plain graph engines (they go through the dimension-agnostic
+ * `searchLattice`), the two sampling planners, and EGO — which optimises a
+ * curve in float coordinates and only asks the space for a collision predicate.
+ * Everything else is a 2D implementation on purpose: JPS's pruning, IDA*'s move ordering, D* Lite's
  * incremental repair and the metaheuristics were all built and published against
  * the 2D engine. Claiming they work in 3D would be a lie the UI could not back
  * up, so a 3D world disables them instead of silently substituting A*.
@@ -72,6 +74,9 @@ const SPATIAL_SOLVERS: ReadonlySet<SolverId> = new Set<SolverId>([
   'weighted',
   'rrt',
   'rrtstar',
+  // EGO needs no lattice to *search*; it uses one to answer "is this point
+  // legal", which every space in the app already answers.
+  'ego',
 ])
 
 export function supportsDim(spec: SolverSpec, dim: 2 | 3): boolean {
@@ -343,6 +348,43 @@ export const SOLVERS: SolverSpec[] = [
     blurb: '把路径当作染色体，靠交叉和变异逐代改进。',
     blurbEn: 'Treats a path as a chromosome and improves it by crossover and mutation.',
   },
+  /**
+   * A third family, not a third search.
+   *
+   * Every solver above either walks a lattice or grows a tree; both return a
+   * *sequence of places*. EGO returns a *curve* — a control polygon that is
+   * pulled by three cost terms — and that is why it is the first planner here
+   * that is naturally three-dimensional: a quadrotor does not walk cells.
+   */
+  {
+    id: 'ego',
+    value: 17,
+    label: 'EGO-Planner',
+    en: 'EGO-Planner',
+    family: 'meta',
+    continuous: true,
+    directional: false,
+    costModel: 'distance',
+    heavy: false,
+    scan: false,
+    ignores: [
+      'heuristic',
+      'diagonal',
+      'cornerCut',
+      'noUTurn',
+      'maxTurn',
+      'turn',
+      'diagonalBias',
+      'goalTolerance',
+      'budget',
+      'smooth',
+      'round',
+      'simplify',
+    ],
+    blurb: '不搜格子，拉一条样条：平滑 + 别撞 + 不超速。',
+    blurbEn:
+      'No search: pull a spline with smoothness, collision and a speed limit. The collision term only asks the stuck points which way is out.',
+  },
 ]
 
 export const SOLVER_BY_VALUE: SolverSpec[] = [...SOLVERS].sort(
@@ -413,6 +455,9 @@ export function cardApplies(cardId: CardId, solver: SolverSpec): boolean {
   if (cardId === 'connectRadius') return solver.id === 'prm'
   if (cardId === 'evaporate' || cardId === 'beta') return solver.id === 'aco'
   if (cardId === 'mutate') return solver.id === 'ga'
+  if (cardId === 'egoSafety' || cardId === 'egoSmooth' || cardId === 'egoSpeed') {
+    return solver.id === 'ego'
+  }
   if (cardId === 'strategy') return true
   return !solver.ignores.includes(cardId)
 }
@@ -433,5 +478,6 @@ export function optionalCards(solver: SolverSpec): CardId[] {
   if (solver.id === 'rrt') return ['sampleStep', 'goalBias']
   if (solver.id === 'rrtstar') return ['sampleStep', 'goalBias', 'rewireRadius']
   if (solver.id === 'prm') return ['connectRadius']
+  if (solver.id === 'ego') return ['egoSafety', 'egoSmooth', 'egoSpeed']
   return []
 }

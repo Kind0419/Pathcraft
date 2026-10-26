@@ -526,7 +526,15 @@ export function Scene3D({
   // and the state update is queued behind a paint so the marker moves first.
   const DRAG_PLAN_MS = 90
   /** How far an anchor may slide out from under the finger, in cells. */
-  const SLIDE_CELLS = 3
+  /**
+   * How far a dragged point may slide to stay legal, in cells.
+   *
+   * Three was too generous: dragging across a column could jump the marker to
+   * the far side, which reads as "it teleported". Two keeps the point on the
+   * wall face the hand is on; the arrow keys cover the rest (perspective can
+   * never be precise to a cell, so the keyboard is the honest fallback).
+   */
+  const SLIDE_CELLS = 2
   const ghostRef = useRef<{
     which: 'start' | 'goal'
     /** The unsnapped point under the finger. Drawn as a hint, never as the marker. */
@@ -567,7 +575,15 @@ export function Scene3D({
     /** Last cell pushed to the planner, so a move inside one cell is free. */
     lastKey: string
     lastEmit: number
+    /**
+     * World-space gap between the hand and the marker at the moment of the grab.
+     * Re-applied every move so the point travels *with* the hand instead of
+     * snapping underneath it.
+     */
+    grabOffset: { x: number; y: number }
   } | null>(null)
+  /** Which endpoint the arrow keys nudge: the last one the hand grabbed. */
+  const lastGrabRef = useRef<'start' | 'goal'>('start')
   /** Queued commit: the newest anchor waiting for the next paint. */
   const commitRef = useRef<{ which: 'start' | 'goal'; point: Vec3; handle: number } | null>(null)
   /** Route for the current drag position. `null` path means "no answer here". */
@@ -1993,8 +2009,15 @@ export function Scene3D({
     // of asymmetry that makes a view feel like a different application.
     const grabbed = onPick ? endpointAt(local.x, local.y) : null
     const grabbedAt = grabbed === 'start' ? start : goal
+    // Grab offset: the marker must not jump to the cursor on the first frame.
+    // The gesture carries the point, it does not teleport it — so remember the
+    // world-space gap between the hand and the marker and re-apply it every move.
+    const grabRaw = grabbed ? toWorldOnFloor(local.x, local.y, grabbedAt.z) : null
     dragRef.current = {
       mode: grabbed ?? 'orbit',
+      grabOffset: grabRaw
+        ? { x: grabbedAt.x - grabRaw.x, y: grabbedAt.y - grabRaw.y }
+        : { x: 0, y: 0 },
       x: event.clientX,
       y: event.clientY,
       yaw: view.yaw,
@@ -2021,6 +2044,7 @@ export function Scene3D({
     trailRef.current = [{ t: performance.now(), x: event.clientX, y: event.clientY }]
 
     if (grabbed) {
+      lastGrabRef.current = grabbed
       ghostRef.current = { which: grabbed, point: grabbedAt, anchor: grabbedAt, sliding: false }
       dragEaseRef.current = { ...grabbedAt }
       previewRef.current = null
@@ -2082,6 +2106,17 @@ export function Scene3D({
     const dy = event.clientY - drag.y
     drag.moved = Math.max(drag.moved, Math.hypot(dx, dy))
 
+    // Shift = look straight down while the hand is moving.
+    //
+    // In a perspective view a screen pixel and a map cell cannot line up: the
+    // error is z·(Z_LIFT−1)·cot(pitch) cells, and at a 45° pitch that is most of
+    // a cell. At π/2 the cotangent is zero and the mapping is exact, so the only
+    // honest way to place a point precisely is to look down. The angle is
+    // restored on release, so the view is a temporary instrument, not a mode.
+    if (drag.mode === 'start' || drag.mode === 'goal') {
+      targetRef.current.pitch = event.shiftKey ? Math.PI / 2 - 0.001 : drag.pitch
+    }
+
     if (drag.mode === 'orbit') {
       const target = targetRef.current
       // "Grab the scene" semantics: drag right and the volume swings right, which
@@ -2112,10 +2147,11 @@ export function Scene3D({
     // is over, which is how you move a point to the upper storey on purpose);
     // without Alt the gesture is planar, so the altitude cannot drift while the
     // hand moves sideways.
-    const raw = event.altKey
+    const base = event.altKey
       ? pickPoint(local.x, local.y)
       : toWorldOnFloor(local.x, local.y, drag.planeZ)
-    if (!raw) return
+    if (!base) return
+    const raw = { x: base.x + drag.grabOffset.x, y: base.y + drag.grabOffset.y, z: base.z }
 
     // The anchor is the nearest legal cell near the finger. When there is none
     // — the hand is inside a column, or over a pocket the inflation sealed —
@@ -2182,6 +2218,7 @@ export function Scene3D({
     }
 
     if (drag.mode === 'start' || drag.mode === 'goal') {
+      targetRef.current.pitch = drag.pitch
       // A tap on a marker is not a move. Committing it anyway would run a full
       // 3D search to produce an identical result, which reads as a hitch.
       if (drag.moved < 3) {
@@ -2224,6 +2261,46 @@ export function Scene3D({
       if (canvasRef.current) canvasRef.current.style.cursor = ''
       schedulePaint()
     }
+  }
+
+  /**
+   * Arrow keys move the last grabbed endpoint one cell (Shift: four).
+   *
+   * Perspective can never be precise to a cell — that is geometry, not a bug —
+   * so the only honest way to finish a placement is the keyboard. It is bound to
+   * the canvas rather than the window: arrows still belong to the page elsewhere.
+   */
+  const handleKeyDown = (event: React.KeyboardEvent<HTMLCanvasElement>) => {
+    if (!onPick) return
+    const dirs: Record<string, [number, number]> = {
+      ArrowLeft: [-1, 0],
+      ArrowRight: [1, 0],
+      ArrowUp: [0, -1],
+      ArrowDown: [0, 1],
+    }
+    const dir = dirs[event.key]
+    if (!dir) return
+    event.preventDefault()
+    const step =
+      world.kind === 'voxel3d'
+        ? world.scene.volume.spacing
+        : world.kind === 'grid2d'
+          ? 1
+          : world.scene.resolution
+    const which = lastGrabRef.current
+    const at = which === 'start' ? start : goal
+    const raw = {
+      x: at.x + dir[0] * step * (event.shiftKey ? 4 : 1),
+      y: at.y + dir[1] * step * (event.shiftKey ? 4 : 1),
+      z: at.z,
+    }
+    const next = snapOnLayer(world, raw, 0.9, SLIDE_CELLS)
+    if (!next) return
+    dragEaseRef.current = { ...next }
+    ghostRef.current = null
+    previewRef.current = null
+    schedulePaint()
+    onPick(which, next)
   }
 
   // Wheel must be a native, non-passive listener. React registers `onWheel` as
@@ -2289,6 +2366,8 @@ export function Scene3D({
       <canvas
         ref={canvasRef}
         className={`scene3d-canvas ${pickMode !== 'none' ? 'is-picking' : ''}`}
+        tabIndex={0}
+        onKeyDown={handleKeyDown}
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}

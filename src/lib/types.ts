@@ -34,6 +34,15 @@ export type CardId =
   | 'evaporate'
   | 'beta'
   | 'mutate'
+  /**
+   * EGO-Planner's three knobs. Unlike the cards above these are not alternative
+   * behaviour — they are the coefficients of the objective itself (λ_s, s_f) plus
+   * the limit that only time reallocation reads (v_max). Each one changes the
+   * curve that comes out, which is asserted in `scripts/cards.ts`.
+   */
+  | 'egoSafety'
+  | 'egoSmooth'
+  | 'egoSpeed'
 
 export type CardGroup = 'search' | 'cost' | 'constraint' | 'bridge'
 
@@ -95,6 +104,13 @@ export type TraceKind =
   | 'incremental'
   | 'sampling'
   | 'meta'
+  /**
+   * Optimising a curve rather than walking a space. The loop body is a gradient
+   * step, the state is a control polygon, and the "open set" is the number of
+   * control points currently in collision — so the flow panel needs its own kind
+   * instead of reusing `graph`.
+   */
+  | 'gradient'
 
 export interface TraceSpec {
   kind: TraceKind
@@ -155,6 +171,15 @@ export interface PlanResult {
   reason?: 'unsupported'
   /** Discrete iteration counter (generations, ant rounds, IDA* passes…). */
   rounds?: number
+  /**
+   * Trajectory duration in seconds, for planners that produce a *timed* path.
+   *
+   * A search returns a sequence of places; a trajectory also has a timetable.
+   * EGO's time reallocation changes nothing about the geometry, so this is the
+   * only number that can report what `v_max` did — and the only honest way for
+   * `scripts/cards.ts` to prove the knob is live.
+   */
+  duration?: number
   /** Where the answer came from; the UI shows this next to the solve time. */
   transport?: 'inline' | 'worker' | 'http'
 }

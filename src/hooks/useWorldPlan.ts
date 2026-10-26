@@ -17,6 +17,7 @@ import { useMemo } from 'react'
 import { usePlan, type PlanState } from './usePlan'
 import { planLatticeWorld } from '../lib/solvers/lattice3d'
 import { planSampleWorld } from '../lib/solvers/sampling3d'
+import { planEgoWorld } from '../lib/solvers/ego'
 import { solverFor, supportsDim, type SolverSpec } from '../lib/solvers/registry'
 import type { World } from '../lib/worlds'
 import type { CardId, CardsState, GridMap, PlanResult } from '../lib/types'
@@ -75,6 +76,11 @@ export function planSpatial(
   if (!supportsDim(solver, dim)) return null
   if (solver.id === 'rrt' || solver.id === 'rrtstar') {
     return planSampleWorld({ world, spec: solver, cards, order, endpoints, strategy })
+  }
+  // EGO is the third family: it does not search, so the strategy index (which
+  // selects a graph mode) means nothing to it.
+  if (solver.id === 'ego') {
+    return planEgoWorld({ world, spec: solver, cards, order, endpoints, strategy })
   }
   if (strategy > 5) return null
   return planLatticeWorld({ world, spec: solver, cards, order, endpoints, strategy })

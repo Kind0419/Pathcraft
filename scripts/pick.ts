@@ -188,6 +188,30 @@ check(
   `${totalCells} cells across 6 layers`,
 )
 
+/* ------------------------------------------------------------ top view --- */
+/*
+ * The drag's precision problem in one assertion.
+ *
+ * In an axonometric view a screen pixel maps to a different floor point for every
+ * altitude, so a point at z = 5 lands `z·(Z_LIFT−1)·cot(pitch)` cells away from
+ * where the cursor was. Looking straight down removes the cotangent entirely.
+ * `Scene3D` uses exactly this: holding Shift during a drag pushes the pitch to
+ * π/2−ε, which makes the hand and the cell the same thing. If this ever stops
+ * holding, that shortcut is a lie and the drag is back to guessing.
+ */
+{
+  const bounds = { min: { x: 0, y: 0, z: 0 }, max: { x: 26, y: 17, z: 5 } }
+  const flat = fitView(bounds, 1200, 760, -0.6, Math.PI / 2 - 0.001, 1)
+  let drift = 0
+  for (let i = 0; i < 40; i += 1) {
+    const p = { x: 2 + (i % 8) * 2.5, y: 1.5 + Math.floor(i / 8) * 3, z: (i % 5) * 1.2 }
+    const at = projectIn(flat, { ...p, z: 0 })
+    const back = unprojectIn(flat, at.x, at.y, p.z)
+    drift = Math.max(drift, Math.hypot(back.x - p.x, back.y - p.y))
+  }
+  check('top view: a point keeps its cell at every altitude', drift < 0.02, `max ${drift.toFixed(4)} cells`)
+}
+
 /* ---------------------------------------------------------------- done --- */
 
 console.log(

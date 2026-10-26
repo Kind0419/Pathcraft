@@ -9,6 +9,7 @@ import { planDStar } from './dstar'
 import { planAco } from './aco'
 import { planGa } from './ga'
 import { planSampling } from './sampling'
+import { planEgoGrid } from './ego'
 
 import type { ProgressFn } from './shared'
 
@@ -46,6 +47,8 @@ export function solveWith(
       return planAco(map, cards, order, spec, onProgress)
     case 'ga':
       return planGa(map, cards, order, spec, onProgress)
+    case 'ego':
+      return planEgoGrid(map, cards, order, spec)
     default:
       return planGraph(map, cards, order, spec)
   }
