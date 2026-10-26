@@ -17,7 +17,7 @@ import { useMemo } from 'react'
 import { usePlan, type PlanState } from './usePlan'
 import { planLatticeWorld } from '../lib/solvers/lattice3d'
 import { planSampleWorld } from '../lib/solvers/sampling3d'
-import { supportsDim, type SolverSpec } from '../lib/solvers/registry'
+import { solverFor, supportsDim, type SolverSpec } from '../lib/solvers/registry'
 import type { World } from '../lib/worlds'
 import type { CardId, CardsState, GridMap, PlanResult } from '../lib/types'
 import type { Vec3 } from '../lib/core/space'
@@ -53,6 +53,33 @@ function unsupported(solver: SolverSpec, dim: 2 | 3): PlanResult {
   }
 }
 
+/**
+ * One plan, no hooks, no state: the same dispatch the hook performs, exposed for
+ * callers that must not trigger a render — the 3D drag preview asks for a route
+ * on every cell crossing, and routing that through React re-rendered the whole
+ * workbench 20 times a second (p95 frame gap 116 ms, measured).
+ *
+ * Returns null for a world/algorithm pair that cannot be planned; the caller
+ * decides whether that means "nothing to draw" or "show the reason".
+ */
+export function planSpatial(
+  world: World,
+  cards: CardsState,
+  order: CardId[],
+  endpoints: Endpoints3,
+  strategy: number,
+): PlanResult | null {
+  if (world.kind === 'grid2d') return null
+  const solver = solverFor(cards)
+  const dim: 2 | 3 = world.kind === 'voxel3d' || world.kind === 'field3d' ? 3 : 2
+  if (!supportsDim(solver, dim)) return null
+  if (solver.id === 'rrt' || solver.id === 'rrtstar') {
+    return planSampleWorld({ world, spec: solver, cards, order, endpoints, strategy })
+  }
+  if (strategy > 5) return null
+  return planLatticeWorld({ world, spec: solver, cards, order, endpoints, strategy })
+}
+
 export function useWorldPlan(
   world: World,
   map2d: GridMap,
@@ -73,11 +100,7 @@ export function useWorldPlan(
     // Two families of spatial planner: the graph engines search a lattice, the
     // sampling ones grow a tree in continuous coordinates. Both answer to the
     // same `SpaceMetric`, which is why neither needs to know which world it is in.
-    if (solver.id === 'rrt' || solver.id === 'rrtstar') {
-      return planSampleWorld({ world, spec: solver, cards, order, endpoints, strategy })
-    }
-    if (strategy > 5) return unsupported(solver, dim)
-    return planLatticeWorld({ world, spec: solver, cards, order, endpoints, strategy })
+    return planSpatial(world, cards, order, endpoints, strategy)
     // Endpoint identity changes every render; its components are the real keys.
   }, [
     world,

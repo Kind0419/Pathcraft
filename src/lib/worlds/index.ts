@@ -233,7 +233,12 @@ export function snapEndpoint(world: World, point: Vec3, pad = 0.9): Vec3 {
  * Returns null when the layer has no legal cell within reach, so the caller can
  * refuse the drop instead of quietly teleporting the endpoint somewhere else.
  */
-export function snapOnLayer(world: World, point: Vec3, pad = 0.9): Vec3 | null {
+export function snapOnLayer(
+  world: World,
+  point: Vec3,
+  pad = 0.9,
+  maxRadius = 6,
+): Vec3 | null {
   if (world.kind === 'grid2d') return snapEndpoint(world, point, pad)
 
   if (world.kind === 'voxel3d') {
@@ -249,7 +254,7 @@ export function snapOnLayer(world: World, point: Vec3, pad = 0.9): Vec3 | null {
     }
     const cx = Math.floor(point.x / spacing)
     const cy = Math.floor(point.y / spacing)
-    const reach = Math.max(v.width, v.height)
+    const reach = Math.min(maxRadius, Math.max(v.width, v.height))
     for (let radius = 0; radius <= reach; radius += 1) {
       for (let dy = -radius; dy <= radius; dy += 1) {
         for (let dx = -radius; dx <= radius; dx += 1) {
@@ -279,7 +284,7 @@ export function snapOnLayer(world: World, point: Vec3, pad = 0.9): Vec3 | null {
   const test = (p: Vec3) => fieldDistance(space, p) >= pad
   if (test(base)) return base
   const step = Math.max(0.25, world.scene.resolution)
-  const reach = 24
+  const reach = maxRadius
   for (let radius = 1; radius <= reach; radius += 1) {
     for (let dy = -radius; dy <= radius; dy += 1) {
       for (let dx = -radius; dx <= radius; dx += 1) {

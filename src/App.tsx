@@ -47,7 +47,7 @@ import {
   type WorldId,
 } from './lib/worlds'
 import { usePlan } from './hooks/usePlan'
-import { useWorldPlan } from './hooks/useWorldPlan'
+import { planSpatial, useWorldPlan } from './hooks/useWorldPlan'
 import { readSetting, writeSetting } from './lib/storage'
 import {
   FAMILIES,
@@ -1561,6 +1561,7 @@ export default function App() {
   const result = planState.result
   const previousRunRef = useRef<{ result: PlanResult; mapId: MapId } | null>(null)
 
+
   useEffect(() => {
     const previous = previousRunRef.current
     if (previous && previous.result !== result && previous.mapId === mapId) {
@@ -2679,9 +2680,16 @@ export default function App() {
                 // this onto a legal cell of its own layer and only sends a new
                 // value when that cell changes, so this is a plan per cell
                 // crossing, not a plan per pointermove.
-                onPreview={(which, point) => {
-                  if (which === 'start') setStart3(point)
-                  else setGoal3(point)
+                // A drag asks for a route, not for a commit: planning in a
+                // callback keeps the gesture out of React entirely (the canvas
+                // draws the preview), and only the drop changes state.
+                previewPlan={(which, point) => {
+                  const ends = {
+                    start: which === 'start' ? point : start3,
+                    goal: which === 'goal' ? point : goal3,
+                  }
+                  const preview = planSpatial(world, effectiveCards, recipeOrder, ends, Math.round(cards.strategy.value))
+                  return preview?.status === 'success' ? (preview.path3 ?? null) : null
                 }}
               />
             )}

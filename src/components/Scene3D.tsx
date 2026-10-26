@@ -44,11 +44,15 @@ interface Props {
   pickMode: 'none' | 'start' | 'goal'
   onPick?: (which: 'start' | 'goal', point: Vec3) => void
   /**
-   * Called during a drag, already snapped, at most once per cell crossing.
-   * The endpoint is a live control: the route has to answer while the hand is
-   * moving, not when it stops.
+   * Ask the parent for a route *without* committing the endpoint.
+   *
+   * Returns the path for "drag S to here", or null when that position has no
+   * answer. Deliberately not a state update: a drag crosses a cell every ~12 px
+   * and routing that through React re-rendered the entire workbench per
+   * crossing (p95 frame gap 116 ms). The gesture is drawn here; only the drop
+   * is committed.
    */
-  onPreview?: (which: 'start' | 'goal', point: Vec3) => void
+  previewPlan?: (which: 'start' | 'goal', point: Vec3) => Vec3[] | null
 }
 
 interface Face {
@@ -185,6 +189,11 @@ function applyPalette(name: 'light' | 'dark'): void {
   MARKER_SHADOW = name === 'dark' ? 'rgba(0, 0, 0, 0.30)' : 'rgba(40, 48, 41, 0.12)'
   GUIDE = p.guide
   WARN = p.warn
+}
+
+/** Identity of a lattice cell, for "did the drag cross a cell" checks. */
+function cellKey(p: Vec3): string {
+  return `${p.x.toFixed(2)}:${p.y.toFixed(2)}:${p.z.toFixed(2)}`
 }
 
 const HOME_VIEW = { yaw: -0.66, pitch: 0.86, zoom: 1 }
@@ -482,7 +491,7 @@ export function Scene3D({
   showPath,
   pickMode,
   onPick,
-  onPreview,
+  previewPlan,
 }: Props) {
   const lang = useLang()
   const theme = useTheme()
@@ -502,18 +511,32 @@ export function Scene3D({
   const homeRef = useRef(false)
 
   /* -------------------------------------------------------- interaction --- */
-  // A dragged endpoint is previewed here *and* pushed to the planner, throttled.
+  // A drag has two positions, and they are not the same thing.
   //
-  // The comment that used to live here said a 3D search costs 70–160 ms, so a
-  // drag could only ever be a preview and the route had to stay put until
-  // release. Measured, it is 8 ms for a continuous field and 45–56 ms for a
-  // voxel world — slow enough to need a budget, fast enough to be live. So the
-  // drag commits, but only when the snapped *cell* changes and never more than
-  // once per DRAG_PLAN_MS. Between those ticks the marker follows the hand at
-  // 60 fps, which is what actually reads as smooth; the route moves a cell at a
-  // time because that is the truth about a grid.
+  //   marker  — where the hand is, unsnapped, redrawn at pointer rate
+  //   anchor  — the legal cell the planner will actually use
+  //
+  // The 2D canvas makes the same split: the marker tracks the cursor while the
+  // endpoint it commits is the nearest legal cell, which is why dragging over a
+  // wall there reads as *sliding* along it rather than stopping dead. In 3D the
+  // two were the same point, so a finger crossing a column made the marker jump
+  // a cell, refuse the drop, or blank the route — three flavours of "stuck".
+  //
+  // A commit costs a search (45–56 ms in a voxel world), so it is budgeted:
+  // only when the anchor cell changes, never more than once per DRAG_PLAN_MS,
+  // and the state update is queued behind a paint so the marker moves first.
   const DRAG_PLAN_MS = 90
-  const ghostRef = useRef<{ which: 'start' | 'goal'; point: Vec3; invalid?: boolean } | null>(null)
+  /** How far an anchor may slide out from under the finger, in cells. */
+  const SLIDE_CELLS = 3
+  const ghostRef = useRef<{
+    which: 'start' | 'goal'
+    /** Where the marker is drawn: the unsnapped point under the finger. */
+    point: Vec3
+    /** The legal cell the drag currently resolves to. */
+    anchor: Vec3
+    /** The finger is over something the anchor had to slide away from. */
+    sliding: boolean
+  } | null>(null)
   const hoverRef = useRef<'start' | 'goal' | null>(null)
   const dragRef = useRef<{
     mode: 'orbit' | 'start' | 'goal'
@@ -529,10 +552,18 @@ export function Scene3D({
     pick: 'none' | 'start' | 'goal'
     /** Altitude held constant for the whole gesture. See `snapOnLayer`. */
     planeZ: number
+    /** Last legal cell — the fallback when the finger is over nothing legal. */
+    anchor: Vec3
+    /** Last anchor the planner could actually route from, for the drop. */
+    goodAnchor: Vec3
     /** Last cell pushed to the planner, so a move inside one cell is free. */
     lastKey: string
     lastEmit: number
   } | null>(null)
+  /** Queued commit: the newest anchor waiting for the next paint. */
+  const commitRef = useRef<{ which: 'start' | 'goal'; point: Vec3; handle: number } | null>(null)
+  /** Route for the current drag position. `null` path means "no answer here". */
+  const previewRef = useRef<{ path: Vec3[] | null } | null>(null)
   /** The exact transform the last frame was drawn with, reused for hit-testing. */
   const frameRef = useRef<Frame | null>(null)
 
@@ -1383,11 +1414,20 @@ export function Scene3D({
     let route: Array<{ x: number; y: number }> = []
     let routeWidth = 3
     let grown = 0
-    const path3 = result?.path3
+    // While dragging, the route on screen is the drag's own answer, not the
+    // committed plan. It is drawn whole (no replay growth) because the gesture
+    // is a question, not a playback.
+    const preview = previewRef.current
+    // A preview that came back infeasible keeps the committed route on screen
+    // rather than blanking it. The marker already says the drop is not real;
+    // an empty canvas says the app crashed.
+    const path3 = preview?.path ?? result?.path3
     if (showPath && path3 && path3.length > 1) {
       const total = path3.length
-      const visible = Math.max(0, Math.min(playhead, result!.events.length))
-      grown = result!.events.length === 0 ? total : Math.max(2, Math.round((visible / result!.events.length) * total))
+      const visible = Math.max(0, Math.min(playhead, result?.events.length ?? 0))
+      grown = preview || !result || result.events.length === 0
+        ? total
+        : Math.max(2, Math.round((visible / result.events.length) * total))
       const { low, span } = altitude
       const lift = (z: number) => {
         const t = clamp((z - low) / span, 0, 1)
@@ -1587,8 +1627,13 @@ export function Scene3D({
       ctx.fillText(label, p.x, p.y + 0.5)
     }
 
+    // The marker is where the hand is; the anchor is where the route starts.
+    // Keeping them apart is what lets a drag slide along a wall instead of
+    // snapping the marker onto cells.
     const startAt = ghost?.which === 'start' ? ghost.point : start
     const goalAt = ghost?.which === 'goal' ? ghost.point : goal
+    const startAnchor = ghost?.which === 'start' ? ghost.anchor : start
+    const goalAnchor = ghost?.which === 'goal' ? ghost.anchor : goal
 
     if (route.length > 1) {
       ctx.lineCap = 'round'
@@ -1604,8 +1649,8 @@ export function Scene3D({
         ctx.lineWidth = routeWidth
         ctx.stroke()
       }
-      leader(startAt, route[0])
-      leader(goalAt, route[route.length - 1])
+      leader(startAnchor, route[0])
+      leader(goalAnchor, route[route.length - 1])
     }
 
     drawMarker(startAt, START, START_GLOW, 'S', ghost?.which === 'start' || pickMode === 'start' || hoverRef.current === 'start')
@@ -1620,16 +1665,19 @@ export function Scene3D({
      * judge: the marker's own vertical. */
     if (ghost) {
       const p = projectPoint(ghost.point)
+      const anchor = projectPoint(ghost.anchor)
       const ground = projectPoint({ x: ghost.point.x, y: ghost.point.y, z: floorZ })
+      const anchorGround = projectPoint({ x: ghost.anchor.x, y: ghost.anchor.y, z: floorZ })
       const lifted = Math.hypot(p.x - ground.x, p.y - ground.y) > 2.5
-      // Two ways a drop can be wrong, and they are different failures: the
-      // layer has nowhere to stand (snap refused), or it has a cell but no way
-      // to reach the other end from it (the search came back infeasible). Both
-      // have to show up on the marker, because the strip at the bottom is four
-      // hundred pixels away from where the hand is.
-      const bad = Boolean(ghost.invalid) || result?.status === 'infeasible'
-      const tone = bad ? WARN : GUIDE
+      // `sliding` is the finger over something the anchor had to leave; the
+      // route is still real, so this is a hint, not an error. An infeasible
+      // search is an error, and the marker is where the hand is looking.
+      const bad = previewRef.current !== null && previewRef.current.path === null
+      const tone = ghost.sliding || bad ? WARN : GUIDE
 
+      // Plumb line: the depth cue an axonometric view does not have. It drops
+      // from the marker, not from the anchor, because it is the marker whose
+      // altitude is being judged.
       if (lifted) {
         ctx.save()
         ctx.setLineDash([4, 4])
@@ -1638,6 +1686,20 @@ export function Scene3D({
         ctx.beginPath()
         ctx.moveTo(p.x, p.y)
         ctx.lineTo(ground.x, ground.y)
+        ctx.stroke()
+        ctx.restore()
+      }
+
+      // When the anchor has slid away from the finger, say so with a short
+      // dashed tie between the two: the offset is the message.
+      if (ghost.sliding) {
+        ctx.save()
+        ctx.setLineDash([2, 3])
+        ctx.strokeStyle = WARN
+        ctx.lineWidth = 1
+        ctx.beginPath()
+        ctx.moveTo(p.x, p.y)
+        ctx.lineTo(anchor.x, anchor.y)
         ctx.stroke()
         ctx.restore()
       }
@@ -1653,14 +1715,14 @@ export function Scene3D({
         ctx.restore()
       }
 
-      // Footprint: an open square, so the landing point reads as a place rather
-      // than a smudge. Dashed when this layer has nowhere to stand.
+      // Footprint: the cell the drop will actually land in. Open square, so a
+      // landing point reads as a place rather than a smudge.
       const half = markerRadius * 0.92
       ctx.save()
-      if (bad) ctx.setLineDash([3, 3])
+      if (ghost.sliding || bad) ctx.setLineDash([3, 3])
       ctx.strokeStyle = tone
       ctx.lineWidth = 1.2
-      ctx.strokeRect(ground.x - half, ground.y - half * 0.62, half * 2, half * 1.24)
+      ctx.strokeRect(anchorGround.x - half, anchorGround.y - half * 0.62, half * 2, half * 1.24)
       ctx.restore()
     }
 
@@ -1803,6 +1865,8 @@ export function Scene3D({
       // altitude for the whole drag. Held in a ref, not read from `start` later,
       // because `start` moves during the drag.
       planeZ: grabbed ? grabbedAt.z : 0,
+      anchor: grabbedAt,
+      goodAnchor: grabbedAt,
       lastKey: '',
       lastEmit: 0,
     }
@@ -1811,10 +1875,44 @@ export function Scene3D({
     homeRef.current = false
 
     if (grabbed) {
-      ghostRef.current = { which: grabbed, point: grabbed === 'start' ? start : goal }
+      ghostRef.current = { which: grabbed, point: grabbedAt, anchor: grabbedAt, sliding: false }
+      previewRef.current = null
       if (canvas) canvas.style.cursor = 'grabbing'
       schedulePaint()
     }
+  }
+
+  /**
+   * Re-plan for the current anchor, but behind a paint.
+   *
+   * The search blocks the main thread for 20–56 ms. Calling it straight from
+   * pointermove spends the frame that would have moved the marker on the search
+   * instead, so the hand moves and the picture does not — which is the "not
+   * smooth" no easing can fix. Queueing behind a frame plus a task lets the
+   * marker reach the screen first; the route lands a frame later.
+   *
+   * Coalescing comes for free: only the newest anchor survives, so a fast sweep
+   * costs one search per DRAG_PLAN_MS rather than one per event.
+   */
+  const planSoon = (which: 'start' | 'goal', point: Vec3) => {
+    if (commitRef.current) {
+      commitRef.current.point = point
+      commitRef.current.which = which
+      return
+    }
+    const handle = window.requestAnimationFrame(() => {
+      const queued = commitRef.current
+      window.setTimeout(() => {
+        if (!queued || commitRef.current !== queued) return
+        commitRef.current = null
+        if (!dragRef.current) return
+        const path = previewPlan?.(queued.which, queued.point) ?? null
+        previewRef.current = { path }
+        if (path) dragRef.current.goodAnchor = queued.point
+        schedulePaint()
+      }, 0)
+    })
+    commitRef.current = { which, point, handle }
   }
 
   const handlePointerMove = (event: React.PointerEvent<HTMLCanvasElement>) => {
@@ -1869,23 +1967,38 @@ export function Scene3D({
       : toWorldOnFloor(local.x, local.y, drag.planeZ)
     if (!raw) return
 
-    const snapped = snapOnLayer(world, raw)
-    ghostRef.current = { which: drag.mode, point: snapped ?? raw, invalid: !snapped }
+    // The anchor is the nearest legal cell near the finger. When there is none
+    // — the hand is inside a column, or over a pocket the inflation sealed —
+    // the anchor holds at its last legal value: the marker keeps following the
+    // hand and the route keeps the last answer that was true. That is what
+    // sliding along a wall looks like; stopping dead is what it looked like
+    // before.
+    const slide = snapOnLayer(world, raw, 0.9, SLIDE_CELLS)
+    if (slide) drag.anchor = slide
+    ghostRef.current = {
+      which: drag.mode,
+      point: raw,
+      anchor: drag.anchor,
+      sliding: !slide,
+    }
     schedulePaint()
 
-    if (!snapped) return
-    // A pointermove inside the same cell changes nothing the planner can see, so
-    // it costs nothing: the marker still tracks the hand, the route holds still.
-    const key = `${snapped.x.toFixed(2)}:${snapped.y.toFixed(2)}:${snapped.z.toFixed(2)}`
+    // A move inside the same cell changes nothing the planner can see, so it
+    // costs nothing: the marker still tracks the hand, the route holds still.
+    const key = cellKey(drag.anchor)
     const now = performance.now()
     if (key === drag.lastKey || now - drag.lastEmit < DRAG_PLAN_MS) return
     drag.lastKey = key
     drag.lastEmit = now
-    onPreview?.(drag.mode, snapped)
+    planSoon(drag.mode, drag.anchor)
   }
   const handlePointerUp = (event: React.PointerEvent<HTMLCanvasElement>) => {
     const drag = dragRef.current
     dragRef.current = null
+    if (commitRef.current) {
+      window.cancelAnimationFrame(commitRef.current.handle)
+      commitRef.current = null
+    }
     if (canvasRef.current) canvasRef.current.style.cursor = ''
     if (!drag) return
     const local = localOf(event.clientX, event.clientY)
@@ -1909,23 +2022,22 @@ export function Scene3D({
       // 3D search to produce an identical result, which reads as a hitch.
       if (drag.moved < 3) {
         ghostRef.current = null
+        previewRef.current = null
         schedulePaint()
         return
       }
-      const raw = event.altKey
-        ? pickPoint(local.x, local.y)
-        : toWorldOnFloor(local.x, local.y, drag.planeZ)
-      const snapped = raw ? snapOnLayer(world, raw) : null
+      // The drop lands on the anchor — the last cell that was legal on this
+      // layer — never on the raw point. If that cell turned out to have no
+      // route, it lands on the last anchor that did: "nearest place it works"
+      // is the 2D behaviour, and it is the only answer that never dead-ends.
+      const unreachable = previewRef.current !== null && previewRef.current.path === null
+      const landed = unreachable ? drag.goodAnchor : drag.anchor
       ghostRef.current = null
+      previewRef.current = null
       // Clear the ghost before the new result lands, otherwise the marker snaps
       // back to the old endpoint for the duration of the search.
       schedulePaint()
-      // No legal cell on this layer: the drop is refused and the marker goes
-      // back where it was. Snapping somewhere else would be a lie about where
-      // the pointer was, which is the whole complaint about dragging in 3D.
-      if (!snapped) return
-      onPreview?.(drag.mode, snapped)
-      onPick?.(drag.mode, snapped)
+      onPick?.(drag.mode, landed)
       return
     }
 
