@@ -50,39 +50,74 @@
 [data-theme="dark"] {
   color-scheme: dark;
 
-  --bg: #0b100e;
-  --panel: #111714;
-  --panel-2: #161d1a;
-  --paper: #0f1512;
-  --text: #e9e4d6;
-  --muted: #9aa69c;
-  --faint: #74817a;
-  --line: #212a26;
-  --line-strong: #33403a;
-  --pine: #6cae95;
-  --pine-deep: #8cc7ae;
-  --pine-soft: #15241e;
-  --clay: #d99a6c;
-  --clay-soft: #271e18;
-  --gold: #d6b176;
-  --gold-soft: #241f14;
-  --blue: #7cb0c0;
-  --blue-soft: #14232a;
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.45);
+  /* Three steps of elevation a few percent apart, the same idea as the light
+   * sheet. The first pass sat at #0b100e and read as a hole: on a field that
+   * dark the eye keeps looking for detail that is not there, and every accent
+   * on top of it turns into a lamp. */
+  --bg: #16150f;
+  --panel: #1c1a14;
+  --panel-2: #232019;
+  --paper: #1a1810;
+  --text: #e9e3d3;
+  --muted: #a7a196;
+  --faint: #837d72;
+  --line: #2a2720;
+  --line-strong: #3e3930;
+  /* Accents lifted and desaturated. A saturated pine on near-black reads as
+   * mud; a saturated clay reads as a warning. These are the light set's hues
+   * with the chroma taken out and the value put back. */
+  --pine: #83bda5;
+  --pine-deep: #9ed3bc;
+  --pine-soft: #1e2a22;
+  --clay: #e0a67c;
+  --clay-soft: #2b2118;
+  --gold: #d8b781;
+  --gold-soft: #26200f;
+  --blue: #8ab8c6;
+  --blue-soft: #17242a;
+
+  /* Chrome sits below the panels, not above them: a topbar brighter than the
+   * sheet underneath is the thing that made the window feel edge-lit. */
+  --chrome: #191710;
+  --chrome-line: #221f17;
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+}
+
+/* The light sheet painted these with literals, and a literal that is fine on
+ * paper is a flashlight at night. Selection, scrollbar and the switch track are
+ * the three that show up on every screen, so they are overridden here rather
+ * than being turned into variables everywhere they appear. */
+[data-theme="dark"] ::selection {
+  color: #f1ece0;
+  background: #3a4436;
+}
+
+[data-theme="dark"] ::-webkit-scrollbar-thumb {
+  background: #3a352b;
+  border: 3px solid transparent;
+  border-radius: 999px;
+  background-clip: padding-box;
+}
+
+[data-theme="dark"] ::-webkit-scrollbar-thumb:hover {
+  background: #474234;
+  border: 3px solid transparent;
+  border-radius: 999px;
+  background-clip: padding-box;
 }
 
 [data-theme="dark"] .topbar {
-  background: #0d1210;
-  border-bottom-color: #1d2521;
+  background: var(--chrome);
+  border-bottom-color: var(--chrome-line);
 }
 
 [data-theme="dark"] .sidebar {
-  background: #0f1512;
-  border-right-color: #1d2521;
+  background: var(--panel);
+  border-right-color: var(--chrome-line);
 }
 
 [data-theme="dark"] .card-group {
-  border-color: #1e2723;
+  border-color: #2b2620;
 }
 
 [data-theme="dark"] .stage-head {
@@ -90,8 +125,12 @@
 }
 
 [data-theme="dark"] .canvas-area {
-  background: #0e1412;
-  border-color: #1e2723;
+  background: #1b1911;
+  border-color: #2b2620;
+}
+
+[data-theme="dark"] .scene3d {
+  background: #17150e;
 }
 
 [data-theme="dark"] .scenario-switch button.is-active,
@@ -101,8 +140,9 @@
   color: var(--text);
 }
 
-[data-theme="dark"] .btn-primary {
-  color: #0c1210;
+[data-theme="dark"] .btn-primary,
+[data-theme="dark"] .play-btn {
+  color: #12160f;
   background: var(--pine);
 }
 
@@ -110,11 +150,73 @@
   background: var(--pine-deep);
 }
 
-/* elements that were painted with literal light colours */
+[data-theme="dark"] .trace-stage.is-active .trace-node {
+  color: #12160f;
+}
+
+[data-theme="dark"] .switch {
+  background: #322f26;
+}
+
+[data-theme="dark"] .switch.is-on {
+  background: var(--pine);
+}
+
+[data-theme="dark"] .toast {
+  color: var(--text);
+  background: #262218;
+  border-color: var(--line-strong);
+}
+
+[data-theme="dark"] .na-banner {
+  background: #2a2214;
+  border-color: #40341f;
+}
+
+[data-theme="dark"] .na-banner strong {
+  color: var(--gold);
+}
+
+/* Borders are the other half of the light sheet: a chip whose colour is a
+ * variable still carries a paper-coloured outline. Tinting the border toward
+ * its own hue keeps the chips legible without lighting them up. */
+[data-theme="dark"] .infeasible-strip {
+  border-top-color: #4a3220;
+}
+
+[data-theme="dark"] .infeasible-action {
+  border-color: #5a3a26;
+}
+
+[data-theme="dark"] .assembly-stage.is-cost,
+[data-theme="dark"] .assembly-stage.is-goal {
+  border-color: #4a4023;
+}
+
+[data-theme="dark"] .assembly-stage.is-post,
+[data-theme="dark"] .assembly-stage.is-neighbor {
+  border-color: #2c3a3c;
+}
+
+[data-theme="dark"] .assembly-stage.is-filter {
+  border-color: #4a3628;
+}
+
+[data-theme="dark"] .assembly-stage.is-priority,
+[data-theme="dark"] .trace-chip.is-yes,
+[data-theme="dark"] .optional-cards button,
+[data-theme="dark"] .choice-chip.is-active {
+  border-color: #334232;
+}
+
+[data-theme="dark"] .legend-dash {
+  border-top-color: var(--faint);
+}
+
 [data-theme="dark"] .edit-modes button:hover,
 [data-theme="dark"] .brush-sizes button:hover,
 [data-theme="dark"] .edit-actions button:hover {
-  background: rgba(255, 255, 255, 0.055);
+  background: rgba(255, 255, 255, 0.05);
 }
 
 [data-theme="dark"] .edit-modes button.is-active,
@@ -142,18 +244,18 @@
 }
 
 [data-theme="dark"] .timeline-wrap {
-  background: #0d1210;
-  border-top-color: #1d2521;
+  background: var(--chrome);
+  border-top-color: var(--chrome-line);
 }
 
 [data-theme="dark"] .timeline {
-  background: #0d1210;
+  background: var(--chrome);
 }
 
 [data-theme="dark"] .tip,
 [data-theme="dark"] [class*="tooltip"] {
-  background: #171f1b;
-  border-color: #2a352f;
+  background: #272218;
+  border-color: #3b3528;
   color: var(--text);
 }
 

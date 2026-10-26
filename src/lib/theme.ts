@@ -59,6 +59,13 @@ export interface CanvasPalette {
   routeGlow: string
   /** the line of light where a wall's top edge turns over */
   wallRim: string
+  /** dashed plumb line + landing square under a dragged 3D marker */
+  guide: string
+  /** a drop that has nowhere legal to land */
+  warn: string
+  /** the 2D board's outer rail: a filled margin and its inner edge */
+  frameFill: string
+  frameLine: string
 }
 
 export const CANVAS: Record<ThemeName, CanvasPalette> = {
@@ -99,46 +106,63 @@ export const CANVAS: Record<ThemeName, CanvasPalette> = {
     pool: 'rgba(255, 247, 225, 0.34)',
     routeGlow: 'transparent',
     wallRim: 'rgba(255, 255, 250, 0.42)',
+    guide: 'rgba(56, 64, 58, 0.30)',
+    warn: '#b4573c',
+    frameFill: 'rgba(56, 64, 58, 0.045)',
+    frameLine: 'rgba(56, 64, 58, 0.18)',
   },
   dark: {
-    /* the field is a sheet of dark stone, lit from the upper left */
-    paperTop: '#141b18',
-    paperLow: '#0a0f0d',
-    grid: 'rgba(196, 214, 200, 0.045)',
-    gridMajor: 'rgba(196, 214, 200, 0.085)',
-    wall: '#3d4a43',
-    wallEdge: 'rgba(255, 246, 228, 0.10)',
-    pathGlow: 'rgba(240, 164, 90, 0.42)',
-    trail: [122, 178, 156],
-    path: '#f0b478',
-    pathEdge: 'rgba(12, 17, 15, 0.80)',
-    markerStroke: '#0b100e',
-    markerInk: '#0b100e',
-    start: '#68bfa2',
-    goal: '#e79a68',
-    ghost: 'rgba(150, 168, 156, 0.42)',
-    /* the 3D stage: a room at night, one warm key */
-    stageTop: '#0d1210',
-    stageMid: '#070b09',
-    stageLow: '#030505',
-    keyLight: 'rgba(255, 206, 150, 0.20)',
-    keyLightMid: 'rgba(255, 206, 150, 0.035)',
-    floor: '#18211d',
-    wallTop: '#56645b',
-    wallSideA: '#404d46',
-    wallSideB: '#2a3530',
-    plate: '#171e1b',
-    plateEdge: 'rgba(200, 214, 200, 0.07)',
-    route: '#ffcf95',
-    routeLow: '#8fd0b2',
-    routeHigh: '#f0a355',
-    routeHalo: 'rgba(6, 10, 9, 0.86)',
-    startGlow: 'rgba(104, 191, 162, 0.22)',
-    goalGlow: 'rgba(231, 154, 104, 0.24)',
-    shadow: 'rgba(0, 0, 0, 0.16)',
-    pool: 'rgba(255, 206, 150, 0.10)',
-    routeGlow: 'rgba(240, 164, 90, 0.16)',
-    wallRim: 'rgba(255, 240, 212, 0.34)',
+    /* A sheet of dark stone lit from the upper left -- but not black.
+     *
+     * The first pass sat at #141b18 over #0a0f0d and read as a hole: large
+     * fields that dark make the eye chase detail that is not there, and every
+     * accent on top of them turns into a lamp. The floor of this palette is
+     * ~#161a17, which is dark enough to be "night" and high enough that walls,
+     * grid and trail still separate without raising their contrast. */
+    paperTop: '#1d1a13',
+    paperLow: '#141209',
+    grid: 'rgba(228, 218, 196, 0.045)',
+    gridMajor: 'rgba(228, 218, 196, 0.10)',
+    wall: '#4d564a',
+    wallEdge: 'rgba(255, 246, 228, 0.12)',
+    /* Accents are lifted and desaturated: #f0b478 on near-black is a 7:1 glare
+     * at the exact place the eye is meant to rest. */
+    pathGlow: 'rgba(238, 186, 130, 0.30)',
+    trail: [132, 180, 158],
+    path: '#eebd8c',
+    pathEdge: 'rgba(20, 18, 12, 0.78)',
+    markerStroke: '#141208',
+    markerInk: '#141208',
+    start: '#7cc3a6',
+    goal: '#e3a077',
+    ghost: 'rgba(158, 170, 156, 0.38)',
+    /* The 3D stage: a room at night, one warm key, floor lifted off the page so
+     * the volume sits on something instead of floating in the dark. */
+    stageTop: '#181610',
+    stageMid: '#141208',
+    stageLow: '#0f0d07',
+    keyLight: 'rgba(255, 214, 166, 0.10)',
+    keyLightMid: 'rgba(255, 214, 166, 0.02)',
+    floor: '#221f16',
+    wallTop: '#525a4b',
+    wallSideA: '#3f473d',
+    wallSideB: '#2a302a',
+    plate: '#1e1b13',
+    plateEdge: 'rgba(228, 218, 196, 0.08)',
+    route: '#ffd3a6',
+    routeLow: '#9ed3b8',
+    routeHigh: '#efae72',
+    routeHalo: 'rgba(12, 10, 6, 0.84)',
+    startGlow: 'rgba(124, 195, 166, 0.19)',
+    goalGlow: 'rgba(227, 160, 119, 0.21)',
+    shadow: 'rgba(0, 0, 0, 0.13)',
+    pool: 'rgba(255, 214, 166, 0.085)',
+    routeGlow: 'rgba(238, 186, 130, 0.12)',
+    wallRim: 'rgba(255, 242, 218, 0.26)',
+    guide: 'rgba(232, 222, 198, 0.30)',
+    warn: '#e89372',
+    frameFill: 'rgba(232, 222, 198, 0.032)',
+    frameLine: 'rgba(232, 222, 198, 0.14)',
   },
 }
 

@@ -219,3 +219,75 @@ export function snapEndpoint(world: World, point: Vec3, pad = 0.9): Vec3 {
   }
   return base
 }
+
+/**
+ * Nearest legal point **on the layer the point is already on**.
+ *
+ * `snapEndpoint` searches a ball in 3D, which is right for a click — the click
+ * is approximate and any nearby legal cell is a good answer. It is wrong for a
+ * drag: a point dragged across a column gets snapped upward, so the endpoint
+ * silently changes storey, which is exactly the move that looks fine in an
+ * axonometric view and turns out to be on the wrong floor. While dragging, the
+ * altitude belongs to the user; only x and y are allowed to move.
+ *
+ * Returns null when the layer has no legal cell within reach, so the caller can
+ * refuse the drop instead of quietly teleporting the endpoint somewhere else.
+ */
+export function snapOnLayer(world: World, point: Vec3, pad = 0.9): Vec3 | null {
+  if (world.kind === 'grid2d') return snapEndpoint(world, point, pad)
+
+  if (world.kind === 'voxel3d') {
+    const v = world.scene.volume
+    const spacing = v.spacing
+    const plane = v.width * v.height
+    const z = Math.max(1, Math.min(v.depth - 2, Math.floor(point.z / spacing)))
+    const free = (x: number, y: number) => {
+      if (x < 1 || y < 1 || x >= v.width - 1 || y >= v.height - 1) return false
+      const index = z * plane + y * v.width + x
+      if (v.cells[index] === 1) return false
+      return v.clearance[index] >= pad / spacing
+    }
+    const cx = Math.floor(point.x / spacing)
+    const cy = Math.floor(point.y / spacing)
+    const reach = Math.max(v.width, v.height)
+    for (let radius = 0; radius <= reach; radius += 1) {
+      for (let dy = -radius; dy <= radius; dy += 1) {
+        for (let dx = -radius; dx <= radius; dx += 1) {
+          // Shell only: the ring has already been searched at a smaller radius.
+          if (Math.max(Math.abs(dx), Math.abs(dy)) !== radius) continue
+          if (!free(cx + dx, cy + dy)) continue
+          return {
+            x: (cx + dx) * spacing + spacing / 2,
+            y: (cy + dy) * spacing + spacing / 2,
+            z: z * spacing + spacing / 2,
+          }
+        }
+      }
+    }
+    return null
+  }
+
+  const space = world.scene.space
+  const { min, max } = space.bounds
+  const clamp = (value: number, low: number, high: number) =>
+    Math.max(low + 0.6, Math.min(high - 0.6, value))
+  const base = {
+    x: clamp(point.x, min.x, max.x),
+    y: clamp(point.y, min.y, max.y),
+    z: space.dim === 3 ? clamp(point.z, min.z, max.z) : 0,
+  }
+  const test = (p: Vec3) => fieldDistance(space, p) >= pad
+  if (test(base)) return base
+  const step = Math.max(0.25, world.scene.resolution)
+  const reach = 24
+  for (let radius = 1; radius <= reach; radius += 1) {
+    for (let dy = -radius; dy <= radius; dy += 1) {
+      for (let dx = -radius; dx <= radius; dx += 1) {
+        if (Math.max(Math.abs(dx), Math.abs(dy)) !== radius) continue
+        const candidate = { x: base.x + dx * step, y: base.y + dy * step, z: base.z }
+        if (test(candidate)) return candidate
+      }
+    }
+  }
+  return null
+}

@@ -212,6 +212,7 @@ const EN: Record<string, string> = {
   '拖动旋转': 'drag to rotate',
   '滚轮缩放': 'scroll to zoom',
   '拖动 S / G 移动端点': 'drag S / G to move an endpoint',
+  '拖 S / G 换位置 · 按住 Alt 换高度': 'drag S / G to place it · hold Alt to change height',
   '放大': 'Zoom in',
   '缩小': 'Zoom out',
   '复位视角': 'Reset view',

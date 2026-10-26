@@ -436,6 +436,36 @@ export function CanvasView({
     )
     ctx.stroke()
 
+    // The board's edge.
+    //
+    // The outer ring of cells is structural, not content: it closes the region
+    // so the search has a boundary, but drawing it as wall put a hard black
+    // rectangle around every screenshot. Leaving it unpainted went the other
+    // way — the field ran off the frame and the map stopped having an edge at
+    // all, which reads as a crop rather than a board. So the ring is a margin
+    // now: a faint fill across the whole ring plus one hairline at its inner
+    // edge. It says "the map ends here" at about the weight of the grid, which
+    // is all a boundary needs to say when the walls are the subject.
+    const boardW = map.width * cell
+    const boardH = map.height * cell
+    // One cell: the band is the structural ring, and the hairline lands exactly
+    // on the first interior grid line, so the edge is where the map says it is.
+    const inset = cell
+    ctx.fillStyle = C.frameFill
+    ctx.fillRect(ox, oy, boardW, inset)
+    ctx.fillRect(ox, oy + boardH - inset, boardW, inset)
+    ctx.fillRect(ox, oy, inset, boardH)
+    ctx.fillRect(ox + boardW - inset, oy, inset, boardH)
+
+    ctx.strokeStyle = C.frameLine
+    ctx.lineWidth = 1
+    ctx.strokeRect(
+      Math.round(ox + inset) + 0.5,
+      Math.round(oy + inset) + 0.5,
+      Math.round(boardW - inset * 2),
+      Math.round(boardH - inset * 2),
+    )
+
     // Card-linked fields.
     if (hoverCard === 'clearance') {
       for (let y = 0; y < map.height; y += 1) {

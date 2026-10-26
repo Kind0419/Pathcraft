@@ -29,6 +29,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { PlanResult } from '../lib/types'
 import type { Primitive, Vec3 } from '../lib/core/space'
 import type { World } from '../lib/worlds'
+import { snapOnLayer } from '../lib/worlds'
 import { tr, useLang } from '../lib/i18n'
 import { CANVAS, type CanvasPalette, useTheme } from '../lib/theme'
 
@@ -42,6 +43,12 @@ interface Props {
   showPath: boolean
   pickMode: 'none' | 'start' | 'goal'
   onPick?: (which: 'start' | 'goal', point: Vec3) => void
+  /**
+   * Called during a drag, already snapped, at most once per cell crossing.
+   * The endpoint is a live control: the route has to answer while the hand is
+   * moving, not when it stops.
+   */
+  onPreview?: (which: 'start' | 'goal', point: Vec3) => void
 }
 
 interface Face {
@@ -126,6 +133,13 @@ let START_GLOW = CANVAS.light.startGlow
 let GOAL_GLOW = CANVAS.light.goalGlow
 let TRAIL = CANVAS.light.trail.join(', ')
 let ROUTE_GLOW = CANVAS.light.routeGlow
+/** Dashed plumb line under a dragged marker: says which altitude it is on. */
+let MARKER_RING = CANVAS.light.markerStroke
+let MARKER_INK = CANVAS.light.markerInk
+let MARKER_SHADOW = 'rgba(40, 48, 41, 0.12)'
+let GUIDE = CANVAS.light.guide
+/** A drop that has no legal cell on its own layer. */
+let WARN = CANVAS.light.warn
 
 /**
  * Point every surface at one palette.
@@ -136,7 +150,8 @@ let ROUTE_GLOW = CANVAS.light.routeGlow
  * repaints with the new set. One scene instance exists at a time, so this is
  * safe as well as cheap.
  */
-function applyPalette(p: CanvasPalette): void {
+function applyPalette(name: 'light' | 'dark'): void {
+  const p = CANVAS[name]
   FLOOR = p.floor
   WALL_TOP = p.wallTop
   WALL_SIDE_A = p.wallSideA
@@ -162,6 +177,14 @@ function applyPalette(p: CanvasPalette): void {
   GOAL_GLOW = p.goalGlow
   TRAIL = p.trail.join(', ')
   ROUTE_GLOW = p.routeGlow
+  MARKER_RING = p.markerStroke
+  MARKER_INK = p.markerInk
+  // A paper shadow is invisible on a dark stage and a black one is a smear on
+  // paper, so the marker's own drop shadow is the one value that has to be
+  // chosen per theme rather than derived.
+  MARKER_SHADOW = name === 'dark' ? 'rgba(0, 0, 0, 0.30)' : 'rgba(40, 48, 41, 0.12)'
+  GUIDE = p.guide
+  WARN = p.warn
 }
 
 const HOME_VIEW = { yaw: -0.66, pitch: 0.86, zoom: 1 }
@@ -459,12 +482,13 @@ export function Scene3D({
   showPath,
   pickMode,
   onPick,
+  onPreview,
 }: Props) {
   const lang = useLang()
   const theme = useTheme()
   // The palette has to be installed before the draw effect runs, and the effect
   // lists `theme` so a switch repaints. useMemo keeps it ordered with render.
-  useMemo(() => applyPalette(CANVAS[theme]), [theme])
+  useMemo(() => applyPalette(theme), [theme])
   const hostRef = useRef<HTMLDivElement | null>(null)
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const [size, setSize] = useState({ width: 0, height: 0 })
@@ -478,11 +502,18 @@ export function Scene3D({
   const homeRef = useRef(false)
 
   /* -------------------------------------------------------- interaction --- */
-  // A dragged endpoint is previewed here rather than committed to the planner: a
-  // 3D search costs 70–160 ms, so re-planning on every pointermove would turn a
-  // drag into a slideshow. The marker follows the cursor; the route stays put
-  // until release.
-  const ghostRef = useRef<{ which: 'start' | 'goal'; point: Vec3 } | null>(null)
+  // A dragged endpoint is previewed here *and* pushed to the planner, throttled.
+  //
+  // The comment that used to live here said a 3D search costs 70–160 ms, so a
+  // drag could only ever be a preview and the route had to stay put until
+  // release. Measured, it is 8 ms for a continuous field and 45–56 ms for a
+  // voxel world — slow enough to need a budget, fast enough to be live. So the
+  // drag commits, but only when the snapped *cell* changes and never more than
+  // once per DRAG_PLAN_MS. Between those ticks the marker follows the hand at
+  // 60 fps, which is what actually reads as smooth; the route moves a cell at a
+  // time because that is the truth about a grid.
+  const DRAG_PLAN_MS = 90
+  const ghostRef = useRef<{ which: 'start' | 'goal'; point: Vec3; invalid?: boolean } | null>(null)
   const hoverRef = useRef<'start' | 'goal' | null>(null)
   const dragRef = useRef<{
     mode: 'orbit' | 'start' | 'goal'
@@ -496,6 +527,11 @@ export function Scene3D({
     /** Screen pixels travelled so far — decides click vs drag. */
     moved: number
     pick: 'none' | 'start' | 'goal'
+    /** Altitude held constant for the whole gesture. See `snapOnLayer`. */
+    planeZ: number
+    /** Last cell pushed to the planner, so a move inside one cell is free. */
+    lastKey: string
+    lastEmit: number
   } | null>(null)
   /** The exact transform the last frame was drawn with, reused for hit-testing. */
   const frameRef = useRef<Frame | null>(null)
@@ -1505,7 +1541,7 @@ export function Scene3D({
 
       // Ground shadow, so the marker is standing somewhere rather than pasted on.
       if (p.y - ground.y > 1.5) {
-        ctx.fillStyle = 'rgba(40, 48, 41, 0.12)'
+        ctx.fillStyle = MARKER_SHADOW
         ctx.beginPath()
         ctx.ellipse(ground.x + 2, ground.y + 2, markerRadius * 0.9, markerRadius * 0.46, 0, 0, TAU)
         ctx.fill()
@@ -1523,7 +1559,7 @@ export function Scene3D({
 
       ctx.beginPath()
       ctx.arc(p.x, p.y, markerRadius + 2.4, 0, TAU)
-      ctx.fillStyle = 'rgba(252, 250, 244, 0.97)'
+      ctx.fillStyle = MARKER_RING
       ctx.fill()
       ctx.strokeStyle = 'rgba(30, 38, 32, 0.16)'
       ctx.lineWidth = 1
@@ -1544,7 +1580,7 @@ export function Scene3D({
       ctx.fillStyle = body
       ctx.fill()
 
-      ctx.fillStyle = '#fdfcf8'
+      ctx.fillStyle = MARKER_INK
       ctx.font = `700 ${Math.max(9, markerRadius * 0.92)}px "Cascadia Mono", ui-monospace, monospace`
       ctx.textAlign = 'center'
       ctx.textBaseline = 'middle'
@@ -1575,6 +1611,59 @@ export function Scene3D({
     drawMarker(startAt, START, START_GLOW, 'S', ghost?.which === 'start' || pickMode === 'start' || hoverRef.current === 'start')
     drawMarker(goalAt, GOAL, GOAL_GLOW, 'G', ghost?.which === 'goal' || pickMode === 'goal' || hoverRef.current === 'goal')
 
+    /* Where a dragged marker actually is.
+     *
+     * An axonometric view has no depth cue, so a marker one storey up looks
+     * exactly like one on the floor in front of it. That is the whole reason a
+     * drag in this view so often ends somewhere the hand did not mean. The plumb
+     * line and the square it lands on add back the one direction the eye cannot
+     * judge: the marker's own vertical. */
+    if (ghost) {
+      const p = projectPoint(ghost.point)
+      const ground = projectPoint({ x: ghost.point.x, y: ghost.point.y, z: floorZ })
+      const lifted = Math.hypot(p.x - ground.x, p.y - ground.y) > 2.5
+      // Two ways a drop can be wrong, and they are different failures: the
+      // layer has nowhere to stand (snap refused), or it has a cell but no way
+      // to reach the other end from it (the search came back infeasible). Both
+      // have to show up on the marker, because the strip at the bottom is four
+      // hundred pixels away from where the hand is.
+      const bad = Boolean(ghost.invalid) || result?.status === 'infeasible'
+      const tone = bad ? WARN : GUIDE
+
+      if (lifted) {
+        ctx.save()
+        ctx.setLineDash([4, 4])
+        ctx.lineWidth = 1
+        ctx.strokeStyle = tone
+        ctx.beginPath()
+        ctx.moveTo(p.x, p.y)
+        ctx.lineTo(ground.x, ground.y)
+        ctx.stroke()
+        ctx.restore()
+      }
+
+      if (bad) {
+        ctx.save()
+        ctx.setLineDash([3, 3])
+        ctx.strokeStyle = WARN
+        ctx.lineWidth = 1.4
+        ctx.beginPath()
+        ctx.arc(p.x, p.y, markerRadius + 6, 0, TAU)
+        ctx.stroke()
+        ctx.restore()
+      }
+
+      // Footprint: an open square, so the landing point reads as a place rather
+      // than a smudge. Dashed when this layer has nowhere to stand.
+      const half = markerRadius * 0.92
+      ctx.save()
+      if (bad) ctx.setLineDash([3, 3])
+      ctx.strokeStyle = tone
+      ctx.lineWidth = 1.2
+      ctx.strokeRect(ground.x - half, ground.y - half * 0.62, half * 2, half * 1.24)
+      ctx.restore()
+    }
+
     if (pickMode !== 'none') {
       ctx.strokeStyle = pickMode === 'start' ? 'rgba(47,93,80,0.42)' : 'rgba(164,95,67,0.42)'
       ctx.setLineDash([4, 4])
@@ -1599,13 +1688,12 @@ export function Scene3D({
    * indistinguishable from "the click is broken".
    */
   const toWorldOnFloor = useCallback(
-    (screenX: number, screenY: number): Vec3 | null => {
+    (screenX: number, screenY: number, planeZ = geometry.pickZ ?? geometry.bounds.min.z): Vec3 | null => {
       const frame = frameRef.current
       if (!frame) return null
       const { bounds } = geometry
       const wx = (screenX - frame.originX) / frame.scale
       const wy = -(screenY - frame.originY) / frame.scale
-      const planeZ = geometry.pickZ ?? bounds.min.z
       // wy = ry·sp + z·cp  →  ry = (wy − z·cp) / sp
       const ry = (wy - planeZ * frame.cp) / Math.max(1e-6, frame.sp)
       const x = wx * frame.cy - ry * frame.sy
@@ -1699,6 +1787,7 @@ export function Scene3D({
     // draggable at all times, and having to arm a mode first is exactly the kind
     // of asymmetry that makes a view feel like a different application.
     const grabbed = onPick ? endpointAt(local.x, local.y) : null
+    const grabbedAt = grabbed === 'start' ? start : goal
     dragRef.current = {
       mode: grabbed ?? 'orbit',
       x: event.clientX,
@@ -1710,6 +1799,12 @@ export function Scene3D({
       lastT: performance.now(),
       moved: 0,
       pick: pickMode,
+      // The gesture is planar: the altitude at the moment of the grab is the
+      // altitude for the whole drag. Held in a ref, not read from `start` later,
+      // because `start` moves during the drag.
+      planeZ: grabbed ? grabbedAt.z : 0,
+      lastKey: '',
+      lastEmit: 0,
     }
     // A grab cancels any coasting: the scene must stop where the hand lands.
     spinRef.current = { yaw: 0, pitch: 0 }
@@ -1765,13 +1860,29 @@ export function Scene3D({
       return
     }
 
-    const point = pickPoint(local.x, local.y)
-    if (point) {
-      ghostRef.current = { which: drag.mode, point }
-      schedulePaint()
-    }
-  }
+    // Endpoint drag. Alt unlocks the altitude (the pointer picks the surface it
+    // is over, which is how you move a point to the upper storey on purpose);
+    // without Alt the gesture is planar, so the altitude cannot drift while the
+    // hand moves sideways.
+    const raw = event.altKey
+      ? pickPoint(local.x, local.y)
+      : toWorldOnFloor(local.x, local.y, drag.planeZ)
+    if (!raw) return
 
+    const snapped = snapOnLayer(world, raw)
+    ghostRef.current = { which: drag.mode, point: snapped ?? raw, invalid: !snapped }
+    schedulePaint()
+
+    if (!snapped) return
+    // A pointermove inside the same cell changes nothing the planner can see, so
+    // it costs nothing: the marker still tracks the hand, the route holds still.
+    const key = `${snapped.x.toFixed(2)}:${snapped.y.toFixed(2)}:${snapped.z.toFixed(2)}`
+    const now = performance.now()
+    if (key === drag.lastKey || now - drag.lastEmit < DRAG_PLAN_MS) return
+    drag.lastKey = key
+    drag.lastEmit = now
+    onPreview?.(drag.mode, snapped)
+  }
   const handlePointerUp = (event: React.PointerEvent<HTMLCanvasElement>) => {
     const drag = dragRef.current
     dragRef.current = null
@@ -1801,12 +1912,20 @@ export function Scene3D({
         schedulePaint()
         return
       }
-      const point = pickPoint(local.x, local.y)
+      const raw = event.altKey
+        ? pickPoint(local.x, local.y)
+        : toWorldOnFloor(local.x, local.y, drag.planeZ)
+      const snapped = raw ? snapOnLayer(world, raw) : null
       ghostRef.current = null
       // Clear the ghost before the new result lands, otherwise the marker snaps
       // back to the old endpoint for the duration of the search.
       schedulePaint()
-      onPick?.(drag.mode, point ?? (drag.mode === 'start' ? start : goal))
+      // No legal cell on this layer: the drop is refused and the marker goes
+      // back where it was. Snapping somewhere else would be a lie about where
+      // the pointer was, which is the whole complaint about dragging in 3D.
+      if (!snapped) return
+      onPreview?.(drag.mode, snapped)
+      onPick?.(drag.mode, snapped)
       return
     }
 
@@ -1879,7 +1998,7 @@ export function Scene3D({
       <div className="scene3d-hint">
         <span>{tr(lang, '拖动旋转')}</span>
         <span>{tr(lang, '滚轮缩放')}</span>
-        <span>{tr(lang, '拖动 S / G 移动端点')}</span>
+        <span>{tr(lang, '拖 S / G 换位置 · 按住 Alt 换高度')}</span>
       </div>
       <div className="scene3d-zoom">
         <button type="button" title={tr(lang, '放大')} onClick={() => zoomBy(1.16)}>

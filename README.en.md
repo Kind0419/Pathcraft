@@ -7,7 +7,7 @@ Build path-planning algorithms from parameter cards and watch the search, execut
 
 [Live Demo](https://Kind0419.github.io/Pathcraft/) · [GitHub](https://github.com/Kind0419/Pathcraft) · [Changelog](CHANGELOG.md) · [MIT License](LICENSE)
 
-> Status: `0.8.0` · 2D grid + continuous + 3D voxel / field · light / dark · React + TypeScript + Canvas
+> Status: `0.9.0` · 2D grid + continuous + 3D voxel / field · light / dark · React + TypeScript + Canvas
 
 [![Pathcraft interactive demo](https://Kind0419.github.io/Pathcraft/preview-en.png?v=2)](https://Kind0419.github.io/Pathcraft/)
 
@@ -38,6 +38,7 @@ Pick modules from the component library, tune values in the assembly table, and 
 - Grid mode: A* / Dijkstra / greedy / BFS / DFS / weighted A* / JPS / IDA* / bidirectional A* / Beam / D* Lite
 - Continuous mode: RRT / RRT* / PRM / visibility graph with smooth continuous paths
 - 3D view: orthographic (drag to orbit, scroll to zoom, reset); voxel worlds draw exposed faces only, the route is tinted by altitude, and columns really do occlude the route behind them
+- 3D endpoints: dragging re-plans live and holds the current layer (hold Alt to change layer); an illegal or unreachable drop turns the marker into a warning
 - Click or drag start and goal; markers slide along safe boundaries and snap to the nearest legal cell
 - Search replay: play, pause, timeline, 0.5x / 1x / 2x; the route grows from start to goal as it runs
 - Search / path / previous-path layer toggles

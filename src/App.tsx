@@ -2675,6 +2675,14 @@ export default function App() {
                   else setGoal3(snapped)
                   setEditMode('none')
                 }}
+                // Live, while the hand is moving. `Scene3D` has already snapped
+                // this onto a legal cell of its own layer and only sends a new
+                // value when that cell changes, so this is a plan per cell
+                // crossing, not a plan per pointermove.
+                onPreview={(which, point) => {
+                  if (which === 'start') setStart3(point)
+                  else setGoal3(point)
+                }}
               />
             )}
             {!is3D && showGhost && ghostPath.length > 1 ? (
